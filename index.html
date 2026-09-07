@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+        <meta name="keywords" content="lean manufacturing, manufacturing execution, Overall Equipment Effectiveness, Shop floor control">
+        <meta name="author" content="Anderson Pantolfi Moraes, Bruno Otavio Passini, João Victor Marquesan">
+        <meta name="description" content="">
+        <title>NEXUS FAB - Dashboard Industrial Avançado</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        
+        <link type="text/css" rel="stylesheet" href="src/css/index.css">
+    </head>   
+    <body>
+        <aside id="sidebar">
+
+        </aside>
+
+            <header>
+                <h1>NEXUS FAB</h1>
+                <h3>Painel de Gestão e Eficiência</h3>
+                <p class="subtitle">Análise BI, Variação Relativa, Metas e Apontamento de Horas</p>
+            </header>
+            
+            </main>
+                <div class="tabs-container">
+                    <button class="tab-btn active" onclick="mudarAba('dashboard', this)">Painel Visual</button>
+                    <button class="tab-btn" onclick="mudarAba('relatorio', this)">Relatório Gerencial</button>
+                    <button class="tab-btn" onclick="mudarAba('cadastro', this)">Central de Lançamentos</button>
+                </div>
+
+                <div class="filter-bar" id="barra-filtros">
+                    <div class="filter-group">
+                        <label>Visão de Setores:</label>
+                        <select id="filtro-visao" onchange="atualizarDashboard()">
+                            <option value="piores">Foco em Gargalos (10 Piores)</option>
+                            <option value="maiores">Foco em Volume (Top 10)</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Esteira Específica:</label>
+                        <select id="filtro-esteira" onchange="atualizarDashboard()">
+                            <option value="todas">Visão Global (Todas)</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Mês (2026):</label>
+                        <select id="filtro-mes" onchange="atualizarDashboard()">
+                            <option value="todos">1º Semestre (Jan a Jun)</option>
+                            <option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option>
+                            <option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="dashboard" class="tab-content active dashboard-container"></div>
+
+                <div id="relatorio" class="tab-content report-container">
+                    <div class="report-header">
+                        <h2>Diagnóstico Automático e Plano de Ação</h2>
+                    </div>
+                    <div id="report-body"></div>
+                </div>
+
+                <div id="cadastro" class="tab-content report-container">
+                    <div class="report-header">
+                        <h2>Central de Operações</h2>
+                        <p>Cadastre novas máquinas e faça o apontamento diário vinculando Crachá, Data e Produtividade.</p>
+                    </div>
+                    
+                    <div class="lancamentos-grid">
+                        
+                        <div class="form-box">
+                            <h3>🕒 Apontamento Diário (Operador)</h3>
+                            
+                            <div class="form-row">
+                                <div class="form-group-cad">
+                                    <label>Data:</label>
+                                    <input type="date" id="ap-data">
+                                </div>
+                                <div class="form-group-cad">
+                                    <label>Crachá do Operador:</label>
+                                    <input type="text" id="ap-cracha" placeholder="Ex: 5894">
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group-cad">
+                                    <label>Setor:</label>
+                                    <select id="ap-setor" onchange="atualizarSelectEsteirasFormulario()">
+                                        <option value="Usinagem CNC">Usinagem CNC</option>
+                                        <option value="Montagem Eletrônica">Montagem Eletrônica</option>
+                                        <option value="Sistemas Hidráulicos">Sistemas Hidráulicos</option>
+                                        <option value="Usinagem de Precisão">Usinagem de Precisão</option>
+                                        <option value="Inspeção de Qualidade">Inspeção de Qualidade</option>
+                                    </select>
+                                </div>
+                                <div class="form-group-cad">
+                                    <label>Esteira Trabalhada:</label>
+                                    <select id="ap-esteira"></select>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group-cad">
+                                    <label>Horas Ronda (Total):</label>
+                                    <input type="number" id="ap-ronda" placeholder="Ex: 8" min="0">
+                                </div>
+                                <div class="form-group-cad">
+                                    <label>Horas Boas (Produzidas):</label>
+                                    <input type="number" id="ap-boas" placeholder="Ex: 6" min="0">
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group-cad">
+                                    <label>Horas Vazias (Paradas):</label>
+                                    <input type="number" id="ap-vazias" placeholder="Ex: 1" min="0">
+                                </div>
+                                <div class="form-group-cad">
+                                    <label>Horas Indiretas (Apoio):</label>
+                                    <input type="number" id="ap-indiretas" placeholder="Ex: 0.5" min="0">
+                                </div>
+                            </div>
+
+                            <div class="msg-erro" id="erro-apontamento">Erro: A soma de Horas Boas, Vazias e Indiretas excede as Horas Ronda.</div>
+                            <button class="btn-salvar" onclick="salvarApontamento()">Registrar Produtividade</button>
+                            <div class="msg-sucesso" id="sucesso-apontamento">Apontamento salvo e vinculado ao banco de dados!</div>
+                        </div>
+
+                        <div class="form-box">
+                            <h3>⚙️ Cadastrar Nova Esteira</h3>
+                            <div class="form-group-cad">
+                                <label>Código (Mín. 1 Nº e exata 1 Letra):</label>
+                                <input type="text" id="cad-codigo" placeholder="Ex: 095a, 12B, 3c" maxlength="4">
+                                <div class="msg-erro" id="erro-codigo">Formato inválido. Siga o exemplo (095a).</div>
+                            </div>
+                            <div class="form-group-cad">
+                                <label>Vincular ao Setor:</label>
+                                <select id="cad-setor">
+                                    <option value="Usinagem CNC">Usinagem CNC</option>
+                                    <option value="Montagem Eletrônica">Montagem Eletrônica</option>
+                                    <option value="Sistemas Hidráulicos">Sistemas Hidráulicos</option>
+                                    <option value="Usinagem de Precisão">Usinagem de Precisão</option>
+                                    <option value="Inspeção de Qualidade">Inspeção de Qualidade</option>
+                                </select>
+                            </div>
+                            <button class="btn-salvar green" onclick="salvarNovaEsteira()">Cadastrar Máquina</button>
+                            <div class="msg-sucesso" id="sucesso-cad">Máquina liberada para uso!</div>
+
+                            <h3 style="margin-top: 30px;">Últimos Registros (Operadores)</h3>
+                            <table class="historico-table" id="tabela-historico">
+                                <thead>
+                                    <tr><th>Data</th><th>Crachá</th><th>Esteira</th><th>Prod. Pura</th></tr>
+                                </thead>
+                                <tbody id="body-historico">
+                                    <tr><td colspan="4" style="text-align:center; color:#7f8c8d;">Nenhum apontamento manual realizado.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                    </div>
+                </div>
+            </main>
+
+            <script src="src/js/index.js"></script>
+            <footer>
+                <p>
+                    Anderson Pantolfi Moraes 114426<br>
+                    Bruno Otavio Passini 115660</br>
+                    João Victor Marquesan 114610</br>
+                </p>
+            </footer>
+    </body>
+</html>
