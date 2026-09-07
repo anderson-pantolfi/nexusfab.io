@@ -1,175 +1,315 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
-        <meta name="keywords" content="lean manufacturing, manufacturing execution, Overall Equipment Effectiveness, Shop floor control">
-        <meta name="author" content="Anderson Pantolfi Moraes, Bruno Otavio Passini, João Victor Marquesan">
-        <meta name="description" content="">
-        <title>NEXUS FAB - Dashboard Industrial Avançado</title>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        
-        <link type="text/css" rel="stylesheet" href="src/css/index.css">
-    </head>   
-    <body>
-        <aside id="sidebar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="NEXUS FAB - Dashboard Industrial Avançado para Gestão de Produção e Eficiência Operacional.">
+    <meta name="keywords" content="Dashboard Industrial, Gestão de Produção, Eficiência Operacional, NEXUS FAB, manufacturing, manufacturing execution, Overall Equipment Effectiveness, Shop floor control, Relatórios Gerenciais, Setup de Máquinas, Gestão de Acessos">
+    <meta name="author" content="NEXUS FAB Team">
 
-        </aside>
+    <title>NEXUS FAB - Dashboard Industrial Avançado</title>
+    
+    <!-- Fontes e Ícones -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Bibliotecas Externas -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    
+    <link type="text/css" rel="stylesheet" href="src/css/index.css">
+</head>   
+<body>
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar">
+        <div class="sidebar-logo">
+            <h2><i class="fas fa-industry"></i> NEXUS FAB</h2>
+        </div>
 
-            <header>
-                <h1>NEXUS FAB</h1>
+        <nav class="sidebar-nav">
+            <a href="#" class="active nav-link" data-target="dashboard"><i class="fas fa-chart-line"></i> Dashboard</a>
+            <a href="#" class="nav-link" data-target="relatorio"><i class="fas fa-clipboard-list"></i> Apontamentos</a>
+            <a href="#" class="nav-link" data-target="cadastro"><i class="fas fa-cogs"></i> Setup Máquinas</a>
+            <!-- NOVO: Link para Gestão de Utilizadores -->
+            <a href="#" class="nav-link" data-target="usuarios"><i class="fas fa-users-cog"></i> Gestão de Acessos</a>
+        </nav>
+
+    </aside>
+
+    <main class="main-content">
+        <!-- Topbar -->
+        <header class="topbar">
+            <div class="topbar-title">
                 <h3>Painel de Gestão e Eficiência</h3>
-                <p class="subtitle">Análise BI, Variação Relativa, Metas e Apontamento de Horas</p>
-            </header>
+                <p class="subtitle">Visão Estratégica de Produção</p>
+            </div>
+            <div class="topbar-actions">
+                <button id="btn-theme" class="icon-btn" title="Alternar Tema">
+                    <i class="fas fa-moon" id="theme-icon"></i>
+                </button>
+                
+                <div class="dropdown">
+                    <button class="icon-btn" id="btn-notif" title="Notificações">
+                        <i class="fas fa-bell"></i><span class="badge" id="notif-badge">1</span>
+                    </button>
+                    <div id="notif-menu" class="dropdown-content">
+                        <div class="dropdown-header">Notificações</div>
+                        <a href="#"><i class="fas fa-exclamation-circle text-warning"></i> Máquina 095a parada</a>
+                    </div>
+                </div>
+
+                <div class="dropdown profile-dropdown">
+                    <button id="btn-profile" class="profile-btn">
+                        <img src="https://ui-avatars.com/api/?name=Admin+User&background=2563eb&color=fff" alt="Perfil">
+                        <span>Admin <i class="fas fa-chevron-down"></i></span>
+                    </button>
+                    <div id="profile-menu" class="dropdown-content">
+                        <!-- NOVO: Adicionados data-target e class nav-link para navegação -->
+                        <a href="#" class="nav-link" data-target="perfil"><i class="fas fa-user"></i> Meu Perfil</a>
+                        <a href="#" class="nav-link" data-target="configuracoes"><i class="fas fa-user-cog"></i> Configurações</a>
+                        <div class="dropdown-divider"></div>
+                        <a href="#" class="text-danger"><i class="fas fa-sign-out-alt"></i> Sair</a>
+                    </div>
+                </div>
+            </div>
+        </header>
             
-            </main>
-                <div class="tabs-container">
-                    <button class="tab-btn active" onclick="mudarAba('dashboard', this)">Painel Visual</button>
-                    <button class="tab-btn" onclick="mudarAba('relatorio', this)">Relatório Gerencial</button>
-                    <button class="tab-btn" onclick="mudarAba('cadastro', this)">Central de Lançamentos</button>
+        <div class="content-wrapper">
+
+            <!-- Filtros Globais (Controlados pelo TS) -->
+            <div class="filter-bar card" id="barra-filtros">
+                <div class="filter-group">
+                    <label>Mês (2026):</label>
+                    <select id="filtro-mes" class="form-input">
+                        <option value="todos">1º Semestre (Jan a Jun)</option>
+                        <option value="1">Janeiro</option><option value="2">Fevereiro</option>
+                        <option value="3">Março</option><option value="4">Abril</option>
+                        <option value="5">Maio</option><option value="6">Junho</option>
+                    </select>
                 </div>
-
-                <div class="filter-bar" id="barra-filtros">
-                    <div class="filter-group">
-                        <label>Visão de Setores:</label>
-                        <select id="filtro-visao" onchange="atualizarDashboard()">
-                            <option value="piores">Foco em Gargalos (10 Piores)</option>
-                            <option value="maiores">Foco em Volume (Top 10)</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label>Esteira Específica:</label>
-                        <select id="filtro-esteira" onchange="atualizarDashboard()">
-                            <option value="todas">Visão Global (Todas)</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label>Mês (2026):</label>
-                        <select id="filtro-mes" onchange="atualizarDashboard()">
-                            <option value="todos">1º Semestre (Jan a Jun)</option>
-                            <option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option>
-                            <option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option>
-                        </select>
-                    </div>
+                <div class="filter-group">
+                    <label>Visão de Setores:</label>
+                    <select id="filtro-visao" class="form-input">
+                        <option value="geral">Foco em Volume (Top 10)</option>
+                        <option value="piores">Foco em Gargalos (10 Piores)</option>
+                    </select>
                 </div>
-
-                <div id="dashboard" class="tab-content active dashboard-container"></div>
-
-                <div id="relatorio" class="tab-content report-container">
-                    <div class="report-header">
-                        <h2>Diagnóstico Automático e Plano de Ação</h2>
-                    </div>
-                    <div id="report-body"></div>
+                <div class="filter-group">
+                    <label>Esteira Específica:</label>
+                    <select id="filtro-esteira" class="form-input">
+                        <option value="todas">Visão Global (Todas)</option>
+                    </select>
                 </div>
+            </div>
 
-                <div id="cadastro" class="tab-content report-container">
-                    <div class="report-header">
-                        <h2>Central de Operações</h2>
-                        <p>Cadastre novas máquinas e faça o apontamento diário vinculando Crachá, Data e Produtividade.</p>
-                    </div>
-                    
-                    <div class="lancamentos-grid">
-                        
-                        <div class="form-box">
-                            <h3>🕒 Apontamento Diário (Operador)</h3>
-                            
-                            <div class="form-row">
-                                <div class="form-group-cad">
-                                    <label>Data:</label>
-                                    <input type="date" id="ap-data">
-                                </div>
-                                <div class="form-group-cad">
-                                    <label>Crachá do Operador:</label>
-                                    <input type="text" id="ap-cracha" placeholder="Ex: 5894">
-                                </div>
+            <!-- 1. DASHBOARD (Os gráfico) -->
+            <div id="dashboard" class="tab-content active dashboard-container">
+                <div class="charts-grid" id="dashboard-grid"></div>
+            </div>
+            
+            <!-- 2. RELATÓRIO GERENCIAL -->
+            <div id="relatorio" class="tab-content">
+                <div class="card">
+                    <h2>Diagnóstico Automático e Plano de Ação</h2>
+                    <div id="report-body" style="margin-top: 20px;"></div>
+                </div>
+            </div>
+
+            <div id="cadastro" class="tab-content">
+                <div class="charts-grid">
+
+                    <div class="card form-box">
+                        <h3><i class="fas fa-cogs"></i> Cadastrar Esteira</h3>
+                        <form id="form-esteira">
+
+                            <div class="form-group">
+                                <label>Código (Ex: 095a):</label>
+                                <input type="text" id="cad-codigo" class="form-input" placeholder="Ex: 095a" maxlength="4" required>
                             </div>
 
-                            <div class="form-row">
-                                <div class="form-group-cad">
-                                    <label>Setor:</label>
-                                    <select id="ap-setor" onchange="atualizarSelectEsteirasFormulario()">
-                                        <option value="Usinagem CNC">Usinagem CNC</option>
-                                        <option value="Montagem Eletrônica">Montagem Eletrônica</option>
-                                        <option value="Sistemas Hidráulicos">Sistemas Hidráulicos</option>
-                                        <option value="Usinagem de Precisão">Usinagem de Precisão</option>
-                                        <option value="Inspeção de Qualidade">Inspeção de Qualidade</option>
-                                    </select>
-                                </div>
-                                <div class="form-group-cad">
-                                    <label>Esteira Trabalhada:</label>
-                                    <select id="ap-esteira"></select>
-                                </div>
-                            </div>
+                            <div class="form-group">
+                                <label>Setor:</label>
 
-                            <div class="form-row">
-                                <div class="form-group-cad">
-                                    <label>Horas Ronda (Total):</label>
-                                    <input type="number" id="ap-ronda" placeholder="Ex: 8" min="0">
-                                </div>
-                                <div class="form-group-cad">
-                                    <label>Horas Boas (Produzidas):</label>
-                                    <input type="number" id="ap-boas" placeholder="Ex: 6" min="0">
-                                </div>
-                            </div>
-
-                            <div class="form-row">
-                                <div class="form-group-cad">
-                                    <label>Horas Vazias (Paradas):</label>
-                                    <input type="number" id="ap-vazias" placeholder="Ex: 1" min="0">
-                                </div>
-                                <div class="form-group-cad">
-                                    <label>Horas Indiretas (Apoio):</label>
-                                    <input type="number" id="ap-indiretas" placeholder="Ex: 0.5" min="0">
-                                </div>
-                            </div>
-
-                            <div class="msg-erro" id="erro-apontamento">Erro: A soma de Horas Boas, Vazias e Indiretas excede as Horas Ronda.</div>
-                            <button class="btn-salvar" onclick="salvarApontamento()">Registrar Produtividade</button>
-                            <div class="msg-sucesso" id="sucesso-apontamento">Apontamento salvo e vinculado ao banco de dados!</div>
-                        </div>
-
-                        <div class="form-box">
-                            <h3>⚙️ Cadastrar Nova Esteira</h3>
-                            <div class="form-group-cad">
-                                <label>Código (Mín. 1 Nº e exata 1 Letra):</label>
-                                <input type="text" id="cad-codigo" placeholder="Ex: 095a, 12B, 3c" maxlength="4">
-                                <div class="msg-erro" id="erro-codigo">Formato inválido. Siga o exemplo (095a).</div>
-                            </div>
-                            <div class="form-group-cad">
-                                <label>Vincular ao Setor:</label>
-                                <select id="cad-setor">
+                                <select id="cad-setor" class="form-input" required>
                                     <option value="Usinagem CNC">Usinagem CNC</option>
                                     <option value="Montagem Eletrônica">Montagem Eletrônica</option>
                                     <option value="Sistemas Hidráulicos">Sistemas Hidráulicos</option>
                                     <option value="Usinagem de Precisão">Usinagem de Precisão</option>
                                     <option value="Inspeção de Qualidade">Inspeção de Qualidade</option>
                                 </select>
-                            </div>
-                            <button class="btn-salvar green" onclick="salvarNovaEsteira()">Cadastrar Máquina</button>
-                            <div class="msg-sucesso" id="sucesso-cad">Máquina liberada para uso!</div>
 
-                            <h3 style="margin-top: 30px;">Últimos Registros (Operadores)</h3>
-                            <table class="historico-table" id="tabela-historico">
+                            </div>
+
+                            <button type="submit" class="btn btn-primary">Cadastrar Máquina</button>
+                        </form>
+                    </div>
+
+                    <div class="card form-box">
+                        <h3><i class="fas fa-user-plus"></i> Cadastrar Operador</h3>
+                        
+                        <form id="form-operador">
+
+                            <div class="form-group">
+                                <label>Nome do Operador:</label>
+                                <input type="text" id="cad-op-nome" class="form-input" placeholder="Ex: Carlos Silva" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Número do Crachá:</label>
+                                <input type="number" id="cad-op-cracha" class="form-input" placeholder="Ex: 5894" required>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary" style="background-color: var(--success);">Salvar Operador</button>
+                        </form>
+
+                    </div>
+
+                    <div class="card form-box" style="grid-column: 1 / -1;">
+                        <h3><i class="far fa-clock"></i> Apontamento de Produtividade</h3>
+                        <form id="form-apontamento" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                            <div class="form-group"><label>Data:</label><input type="date" id="ap-data" class="form-input" required></div>
+                            
+                            <div class="form-group">
+                                <label>Operador (Crachá):</label>
+                                <select id="ap-operador" class="form-input" required>
+
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Setor:</label>
+                                <select id="ap-setor" class="form-input" required>
+                                    <option value="Usinagem CNC">Usinagem CNC</option>
+                                    <option value="Montagem Eletrônica">Montagem Eletrônica</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Esteira:</label>
+                                <select id="ap-esteira" class="form-input" required></select>
+                            </div>
+
+                            <div class="form-group"><label>Horas Ronda (Total):</label><input type="number" id="ap-ronda" class="form-input" min="0.1" step="0.1" required></div>
+                            <div class="form-group"><label>Horas Boas:</label><input type="number" id="ap-boas" class="form-input" min="0" step="0.1" required></div>
+                            <div class="form-group"><label>Horas Vazias (Parado):</label><input type="number" id="ap-vazias" class="form-input" min="0" step="0.1" required></div>
+                            <div class="form-group"><label>Horas Indiretas (Apoio):</label><input type="number" id="ap-indiretas" class="form-input" min="0" step="0.1" required></div>
+                            
+                            <div style="grid-column: 1 / -1;">
+
+                                <button type="submit" class="btn btn-primary" style="width: 100%;">Registrar Apontamento Diário</button>
+                            </div>
+                        </form>
+                    </div>
+
+                </div>
+            </div>
+            
+            <div id="perfil" class="tab-content">
+                <div class="card form-box" style="max-width: 600px; margin: 0 auto;">
+                    <h3><i class="fas fa-id-badge"></i> Meu Perfil</h3>
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <img src="https://ui-avatars.com/api/?name=Admin+User&background=2563eb&color=fff&size=100" style="border-radius: 50%;" alt="Avatar">
+                    </div>
+                    <form id="form-perfil">
+                        <div class="form-group">
+                            <label>Nome Completo</label>
+                            <input type="text" class="form-input" value="Admin User" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Email de Contacto</label>
+                            <input type="email" class="form-input" value="admin@nexusfab.com" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Nova Palavra-passe</label>
+                            <input type="password" class="form-input" placeholder="Deixe em branco para manter a atual">
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%;">Atualizar Perfil</button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="configuracoes" class="tab-content">
+                <div class="card form-box" style="max-width: 600px; margin: 0 auto;">
+                    <h3><i class="fas fa-cogs"></i> Configurações do Sistema</h3>
+                    
+                    <div class="settings-list">
+                        <div class="setting-item">
+                            <div>
+                                <strong>Notificações Sonoras</strong>
+                                <p class="text-muted" style="font-size: 0.85rem;">Tocar som quando uma máquina parar.</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;">
+                        
+                        <div class="setting-item">
+                            <div>
+                                <strong>Atualização Automática (Real-Time)</strong>
+                                <p class="text-muted" style="font-size: 0.85rem;">Atualizar gráficos a cada 30 segundos.</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. GESTÃO DE UTILIZADORES / PERMISSÕES -->
+            <div id="usuarios" class="tab-content">
+                <div class="charts-grid">
+                    
+                    <div class="card form-box">
+                        <h3><i class="fas fa-user-plus"></i> Novo Utilizador</h3>
+                        <form id="form-novo-usuario">
+                            <div class="form-group">
+                                <label>Nome Completo</label>
+                                <input type="text" id="novo-nome" class="form-input" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Número do Crachá</label>
+                                <input type="text" id="novo-cracha" class="form-input" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Nível de Permissão (Papel)</label>
+                                <select id="novo-papel" class="form-input" required>
+                                    <option value="Operador">Operador (Apenas Apontamentos)</option>
+                                    <option value="Gerente">Gerente (Ver Relatórios)</option>
+                                    <option value="Admin">Administrador (Acesso Total)</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Cadastrar Utilizador</button>
+                        </form>
+                    </div>
+
+                    <!-- Tabela de Gestão de Permissões -->
+                    <div class="card">
+                        <h3><i class="fas fa-users-cog"></i> Controlo de Permissões</h3>
+                        <div class="table-responsive" style="margin-top: 16px;">
+                            <table class="data-table">
                                 <thead>
-                                    <tr><th>Data</th><th>Crachá</th><th>Esteira</th><th>Prod. Pura</th></tr>
+                                    <tr>
+                                        <th>Crachá</th>
+                                        <th>Nome</th>
+                                        <th>Permissão</th>
+                                        <th>Ação</th>
+                                    </tr>
                                 </thead>
-                                <tbody id="body-historico">
-                                    <tr><td colspan="4" style="text-align:center; color:#7f8c8d;">Nenhum apontamento manual realizado.</td></tr>
+                                <tbody id="tabela-usuarios-body">
                                 </tbody>
                             </table>
                         </div>
-
                     </div>
                 </div>
-            </main>
+            </div>
 
-            <script src="src/js/index.js"></script>
-            <footer>
-                <p>
-                    Anderson Pantolfi Moraes 114426<br>
-                    Bruno Otavio Passini 115660</br>
-                    João Victor Marquesan 114610</br>
-                </p>
-            </footer>
-    </body>
+        </div>
+    </main>
+
+    <script src="src/js/index.js"></script>
+</body>
 </html>
