@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "rootDir": "./src/typescript",
+    "outDir": "./src/js", 
+    "module": "ESNext", 
+    "moduleResolution": "Bundler",
+    "target": "esnext",
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "strict": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true
+  }
+}

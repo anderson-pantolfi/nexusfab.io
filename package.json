@@ -1,0 +1,17 @@
+{
+  "name": "projeto",
+  "version": "1.0.0",
+  "description": "Sistema de Gerenciamento de Produção",
+  "main": "index.js",
+  "scripts": {
+  "build": "node ./node_modules/typescript/lib/tsc.js",
+  "watch": "node ./node_modules/typescript/lib/tsc.js -w",
+  "test": "echo \"Error: no test specified\" && exit 1"
+},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
