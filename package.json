@@ -4,10 +4,15 @@
   "description": "Sistema de Gerenciamento de Produção",
   "main": "index.js",
   "scripts": {
+<<<<<<< HEAD
   "build": "node ./node_modules/typescript/lib/tsc.js",
   "watch": "node ./node_modules/typescript/lib/tsc.js -w",
   "test": "echo \"Error: no test specified\" && exit 1"
 },
+=======
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+>>>>>>> b11dcfeb65d6d469031dfeed45adf1732dd04a38
   "keywords": [],
   "author": "",
   "license": "ISC",
