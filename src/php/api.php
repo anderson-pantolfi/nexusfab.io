@@ -5,7 +5,7 @@ require __DIR__ . '/config.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: ' . ALLOWED_ORIGIN);
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -52,6 +52,38 @@ function horas(array $d, string $campo, bool $positivo = false): float
     return $v;
 }
 
+function excluir(PDO $pdo, string $tabela, string $pk, string $tabelaVinculo, string $fkVinculo, string $nomeVinculo): never
+{
+    $id = (int)($_GET['id'] ?? 0);
+    $forcar = ($_GET['forcar'] ?? '') === '1';
+    if ($id <= 0) erro('Identificador inválido.');
+
+    $st = $pdo->prepare("SELECT 1 FROM $tabela WHERE $pk = ?");
+    $st->execute([$id]);
+    if (!$st->fetchColumn()) erro('Registro não encontrado.', 404);
+
+    $st = $pdo->prepare("SELECT COUNT(*) FROM $tabelaVinculo WHERE $fkVinculo = ?");
+    $st->execute([$id]);
+    $vinculos = (int)$st->fetchColumn();
+
+    if ($vinculos > 0 && !$forcar) {
+        responder(['erro' => "Registro possui $vinculos $nomeVinculo vinculado(s).", 'vinculos' => $vinculos], 409);
+    }
+
+    $pdo->beginTransaction();
+    try {
+        if ($vinculos > 0) {
+            $pdo->prepare("DELETE FROM $tabelaVinculo WHERE $fkVinculo = ?")->execute([$id]);
+        }
+        $pdo->prepare("DELETE FROM $tabela WHERE $pk = ?")->execute([$id]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+    responder(['excluido' => true, 'vinculos_removidos' => $vinculos]);
+}
+
 $recurso = $_GET['recurso'] ?? '';
 $metodo  = $_SERVER['REQUEST_METHOD'];
 
@@ -65,6 +97,13 @@ try {
             responder($pdo->query(
                 'SELECT id_setor, nome, meta_percentual FROM setor ORDER BY nome'
             )->fetchAll());
+
+        // ---------- ANOS COM DADOS ----------
+        case 'GET:anos':
+            $linhas = $pdo->query(
+                'SELECT DISTINCT YEAR(data_registro) AS ano FROM apontamento_diario ORDER BY ano'
+            )->fetchAll();
+            responder(array_map('intval', array_column($linhas, 'ano')));
 
         // ---------- FUNCIONÁRIOS ----------
         case 'GET:funcionarios':
@@ -92,11 +131,13 @@ try {
             if ($st->fetchColumn()) erro('Matrícula já cadastrada.', 409);
 
             $st = $pdo->prepare(
-                'INSERT INTO funcionario (id_setor, codigo_matricula, nome, cargo)
-                 VALUES (?, ?, ?, ?)'
+                'INSERT INTO funcionario (id_setor, codigo_matricula, nome, cargo) VALUES (?, ?, ?, ?)'
             );
             $st->execute([$idSetor, $matricula, $nome, $cargo]);
             responder(['id_funcionario' => (int)$pdo->lastInsertId()], 201);
+
+        case 'DELETE:funcionarios':
+            excluir($pdo, 'funcionario', 'id_funcionario', 'apontamento_diario', 'id_funcionario', 'apontamento(s)');
 
         // ---------- ESTEIRAS ----------
         case 'GET:esteiras':
@@ -114,11 +155,12 @@ try {
             $st->execute([$codigo]);
             if ($st->fetchColumn()) erro('Esteira já cadastrada com esse código patrimônio.', 409);
 
-            $st = $pdo->prepare(
-                'INSERT INTO esteira (codigo_patrimonio, nome_descricao) VALUES (?, ?)'
-            );
+            $st = $pdo->prepare('INSERT INTO esteira (codigo_patrimonio, nome_descricao) VALUES (?, ?)');
             $st->execute([$codigo, $desc]);
             responder(['id_esteira' => (int)$pdo->lastInsertId()], 201);
+
+        case 'DELETE:esteiras':
+            excluir($pdo, 'esteira', 'id_esteira', 'esteiras_do_dia', 'id_esteira', 'registro(s) de apontamento');
 
         // ---------- APONTAMENTO ----------
         case 'POST:apontamentos':
@@ -140,7 +182,6 @@ try {
 
             $pdo->beginTransaction();
             try {
-                // Cria o apontamento do dia ou acumula se já existir
                 $st = $pdo->prepare(
                     'INSERT INTO apontamento_diario
                        (id_funcionario, data_registro, horas_ronda, horas_apontadas,
@@ -158,7 +199,6 @@ try {
                 $st->execute([$idFunc, $data, $ronda, $apont, $prod, $improd, $reparo, $flut]);
                 $idApont = (int)$pdo->lastInsertId();
 
-                // Vincula a esteira (acumula horas se já vinculada no dia)
                 $st = $pdo->prepare(
                     'INSERT INTO esteiras_do_dia (id_apontamento, id_esteira, horas_trabalhadas_nela)
                      VALUES (?, ?, ?)
@@ -167,7 +207,6 @@ try {
                 );
                 $st->execute([$idApont, $idEsteira, $nela]);
 
-                // Validação: soma nas esteiras não pode passar da ronda total do dia
                 $st = $pdo->prepare(
                     'SELECT a.horas_ronda, SUM(ed.horas_trabalhadas_nela) AS soma
                      FROM apontamento_diario a
@@ -178,9 +217,7 @@ try {
                 $st->execute([$idApont]);
                 $chk = $st->fetch();
                 if ($chk && (float)$chk['soma'] > (float)$chk['horas_ronda']) {
-                    throw new DomainException(
-                        'A soma das horas nas esteiras excede as horas de ronda do dia.'
-                    );
+                    throw new DomainException('A soma das horas nas esteiras excede as horas de ronda do dia.');
                 }
 
                 $pdo->commit();
@@ -194,28 +231,45 @@ try {
             }
 
         // ---------- DASHBOARD ----------
-        // GET api.php?recurso=dashboard&ano=2026&mes=3&id_esteira=2
         case 'GET:dashboard':
-            $ano = (int)($_GET['ano'] ?? date('Y'));
-            $sql = 'SELECT mes, id_esteira, nome_esteira, setor,
-                           SUM(horas_ronda)        AS horas_ronda,
-                           SUM(horas_produtivas)   AS horas_produtivas,
-                           SUM(horas_improdutivas) AS horas_improdutivas,
-                           SUM(horas_reparo)       AS horas_reparo,
-                           SUM(horas_flutuantes)   AS horas_flutuantes
-                    FROM vw_dashboard
-                    WHERE ano = ?';
-            $params = [$ano];
-
-            if (!empty($_GET['mes']) && $_GET['mes'] !== 'todos') {
-                $sql .= ' AND mes = ?';
-                $params[] = (int)$_GET['mes'];
+            $ano    = (int)($_GET['ano'] ?? date('Y'));
+            $mesIni = (int)($_GET['mes_ini'] ?? 1);
+            $mesFim = (int)($_GET['mes_fim'] ?? 12);
+            if ($ano < 2000 || $ano > 2100) erro('Ano inválido.');
+            if ($mesIni < 1 || $mesIni > 12 || $mesFim < 1 || $mesFim > 12 || $mesIni > $mesFim) {
+                erro('Período inválido.');
             }
+
+            $inicio = sprintf('%04d-%02d-01', $ano, $mesIni);
+            $fim = (new DateTimeImmutable(sprintf('%04d-%02d-01', $ano, $mesFim)))
+                ->modify('last day of this month')->format('Y-m-d');
+
+            $sql = 'SELECT MONTH(a.data_registro) AS mes, e.id_esteira, e.nome_descricao AS nome_esteira,
+                           s.nome AS setor,
+                           SUM(ed.horas_trabalhadas_nela)                                   AS horas_ronda,
+                           SUM(a.horas_produtivas   * ed.horas_trabalhadas_nela / t.total) AS horas_produtivas,
+                           SUM(a.horas_improdutivas * ed.horas_trabalhadas_nela / t.total) AS horas_improdutivas,
+                           SUM(a.horas_reparo       * ed.horas_trabalhadas_nela / t.total) AS horas_reparo,
+                           SUM(a.horas_flutuantes   * ed.horas_trabalhadas_nela / t.total) AS horas_flutuantes
+                    FROM apontamento_diario a
+                    JOIN (SELECT ed2.id_apontamento, SUM(ed2.horas_trabalhadas_nela) AS total
+                          FROM esteiras_do_dia ed2
+                          JOIN apontamento_diario a2 ON a2.id_apontamento = ed2.id_apontamento
+                          WHERE a2.data_registro BETWEEN ? AND ?
+                          GROUP BY ed2.id_apontamento) t ON t.id_apontamento = a.id_apontamento
+                    JOIN esteiras_do_dia ed ON ed.id_apontamento = a.id_apontamento
+                    JOIN esteira e          ON e.id_esteira      = ed.id_esteira
+                    JOIN funcionario f      ON f.id_funcionario  = a.id_funcionario
+                    JOIN setor s            ON s.id_setor        = f.id_setor
+                    WHERE a.data_registro BETWEEN ? AND ?';
+            $params = [$inicio, $fim, $inicio, $fim];
+
             if (!empty($_GET['id_esteira']) && $_GET['id_esteira'] !== 'todas') {
-                $sql .= ' AND id_esteira = ?';
+                $sql .= ' AND ed.id_esteira = ?';
                 $params[] = (int)$_GET['id_esteira'];
             }
-            $sql .= ' GROUP BY mes, id_esteira, nome_esteira, setor ORDER BY mes, nome_esteira';
+            $sql .= ' GROUP BY MONTH(a.data_registro), e.id_esteira, e.nome_descricao, s.nome
+                      ORDER BY mes, nome_esteira';
 
             $st = $pdo->prepare($sql);
             $st->execute($params);
@@ -229,6 +283,7 @@ try {
                 $l['mes'] = (int)$l['mes'];
                 $l['id_esteira'] = (int)$l['id_esteira'];
             }
+            unset($l);
             responder($linhas);
 
         default:
