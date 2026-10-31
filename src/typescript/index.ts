@@ -2,38 +2,74 @@ declare const Chart: any;
 declare const Swal: any;
 
 // ============================================================
-// 1. CONFIGURAÇÃO
+// 1. INFRAESTRUTURA (único valor fixo: o endereço da API)
 // ============================================================
 const API_URL: string = 'http://localhost/nexusfab/src/php/api.php';
-const META_PADRAO: number = 80;
-const TOP_ESTEIRAS: number = 10;
-const ITENS_POR_PAGINA: number = 12;
-
-const CORES = {
-    produtivas: '#10b981',
-    improdutivas: '#f59e0b',
-    reparo: '#ef4444',
-    flutuantes: '#8b5cf6',
-    meta: '#2563eb'
-} as const;
-
-const MESES: readonly string[] = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-const MESES_CURTOS: readonly string[] = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-
-const TITULOS: Record<string, [string, string]> = {
-    dashboard: ['Painel de Gestão e Eficiência', 'Visão Estratégica de Produção'],
-    relatorio: ['Relatório Gerencial', 'Diagnóstico automático e plano de ação'],
-    apontamentos: ['Apontamentos', 'Registro diário de produtividade'],
-    funcionarios: ['Funcionários', 'Cadastro e gestão da equipe'],
-    esteiras: ['Esteiras', 'Cadastro e gestão de máquinas'],
-    perfil: ['Meu Perfil', 'Dados da conta'],
-    configuracoes: ['Configurações', 'Preferências do sistema']
-};
 
 // ============================================================
 // 2. TIPOS
 // ============================================================
-interface Setor { id_setor: number; nome: string; meta_percentual: number | string; }
+type ValorConfig = number | string | boolean;
+
+interface Configuracao {
+    chave: string;
+    valor: ValorConfig;
+    tipo: 'numero' | 'texto' | 'booleano';
+    titulo: string;
+    descricao: string;
+    editavel: boolean;
+    minimo: number | null;
+    maximo: number | null;
+}
+
+interface CategoriaHora {
+    chave: string;
+    rotulo: string;
+    rotulo_longo: string;
+    cor: string;
+    icone: string;
+    acao: string | null;
+    perda: boolean;
+}
+
+interface Periodo {
+    codigo: string;
+    rotulo: string;
+    rotulo_curto: string | null;
+    mes_inicio: number;
+    mes_fim: number;
+}
+
+interface Visao {
+    codigo: string;
+    rotulo: string;
+    descricao_curta: string;
+    ordenacao: 'volume' | 'produtividade_asc';
+}
+
+interface Aba {
+    codigo: string;
+    rotulo_menu: string;
+    titulo: string;
+    subtitulo: string;
+    icone: string;
+    posicao: 'menu' | 'perfil';
+}
+
+interface Usuario { nome: string; apelido: string; email: string; avatar_url: string; tema: string; }
+interface Notificacao { id_notificacao: number; mensagem: string; icone: string; lida: boolean; }
+
+interface Inicializacao {
+    configuracoes: Configuracao[];
+    categorias: CategoriaHora[];
+    periodos: Periodo[];
+    visoes: Visao[];
+    abas: Aba[];
+    usuario: Usuario | null;
+    notificacoes: Notificacao[];
+}
+
+interface Setor { id_setor: number; nome: string; meta_percentual: number | string; total_funcionarios: number; }
 
 interface Funcionario {
     id_funcionario: number;
@@ -75,11 +111,44 @@ interface LinhaDashboard extends Horas {
 }
 
 interface Agregado extends LinhaDashboard { rotulo: string; prodPura: number; }
-interface Periodo { inicio: number; fim: number; rotulo: string; }
 interface Filtros { ano: number; periodo: Periodo; visao: string; esteira: string; }
 
 // ============================================================
-// 3. UTILITÁRIOS
+// 3. DADOS VINDOS DO BANCO (preenchidos em /inicializacao)
+// ============================================================
+const App: {
+    configuracoes: Configuracao[];
+    categorias: CategoriaHora[];
+    periodos: Periodo[];
+    visoes: Visao[];
+} = { configuracoes: [], categorias: [], periodos: [], visoes: [] };
+
+function configuracao(chave: string): Configuracao {
+    const cfg = App.configuracoes.find(c => c.chave === chave);
+    if (!cfg) throw new Error(`Configuração "${chave}" não encontrada no banco de dados.`);
+    return cfg;
+}
+const cfgNumero = (chave: string): number => Number(configuracao(chave).valor);
+const cfgTexto = (chave: string): string => String(configuracao(chave).valor);
+const metaPadrao = (): number => cfgNumero('meta_padrao');
+
+function nomeMes(mes: number, curto: boolean = false): string {
+    const periodo = App.periodos.find(p => p.codigo === String(mes));
+    return (curto ? periodo?.rotulo_curto : periodo?.rotulo) ?? `Mês ${mes}`;
+}
+
+function obterPeriodo(codigo: string): Periodo {
+    const periodo = App.periodos.find(p => p.codigo === codigo);
+    if (!periodo) throw new Error(`Período "${codigo}" não encontrado no banco de dados.`);
+    return periodo;
+}
+
+function horasDe(h: Horas, chave: string): number {
+    return (h as unknown as Record<string, number>)[`horas_${chave}`] ?? 0;
+}
+
+// ============================================================
+// 4. UTILITÁRIOS
 // ============================================================
 function escapeHtml(valor: unknown): string {
     return String(valor ?? '')
@@ -108,17 +177,12 @@ function formatarNumero(valor: number, casas: number = 1): string {
     return valor.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
 }
 
-function formatarPercentual(valor: number): string {
-    return `${formatarNumero(valor)}%`;
-}
+const formatarPercentual = (valor: number): string => `${formatarNumero(valor)}%`;
+const percentual = (parte: number, total: number): number => (total > 0 ? (parte / total) * 100 : 0);
 
-function nomeMes(mes: number, curto: boolean = false): string {
-    return (curto ? MESES_CURTOS : MESES)[mes] ?? `Mês ${mes}`;
-}
-
-function percentual(parte: number, total: number): number {
-    return total > 0 ? (parte / total) * 100 : 0;
-}
+/** Minúsculas e sem acentos, para buscas que ignoram "João" vs "joao". */
+const normalizarTexto = (texto: string): string =>
+    texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 
 function hojeISO(): string {
     const agora = new Date();
@@ -133,9 +197,7 @@ function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): (.
     };
 }
 
-function lerNumero(id: string): number {
-    return parseFloat(elementoObrigatorio<HTMLInputElement>(id).value);
-}
+const lerNumero = (id: string): number => parseFloat(elementoObrigatorio<HTMLInputElement>(id).value);
 
 function mostrarErro(e: unknown): void {
     Swal.fire('Erro', e instanceof Error ? e.message : 'Erro inesperado.', 'error');
@@ -161,25 +223,10 @@ function totalizar(linhas: readonly Horas[]): Horas {
     return total;
 }
 
-function produtividade(h: Horas): number {
-    return percentual(h.horas_produtivas, h.horas_ronda);
-}
-
-const PERIODOS: Record<string, Periodo> = {
-    todos: { inicio: 1, fim: 12, rotulo: 'Ano completo' },
-    S1: { inicio: 1, fim: 6, rotulo: '1º Semestre' },
-    S2: { inicio: 7, fim: 12, rotulo: '2º Semestre' }
-};
-
-function obterPeriodo(valor: string): Periodo {
-    const fixo = PERIODOS[valor];
-    if (fixo) return fixo;
-    const mes = Number(valor);
-    return { inicio: mes, fim: mes, rotulo: nomeMes(mes) };
-}
+const produtividade = (h: Horas): number => percentual(h.horas_produtivas, h.horas_ronda);
 
 // ============================================================
-// 4. API
+// 5. API
 // ============================================================
 class ApiError extends Error {
     public readonly status: number;
@@ -210,16 +257,28 @@ class ApiService {
         }
 
         let dados: Record<string, unknown> = {};
-        try { dados = await resposta.json(); } catch { }
+        try { dados = await resposta.json(); } catch { /* resposta sem JSON */ }
 
         if (!resposta.ok) {
             const erro = dados['erro'];
-            throw new ApiError(typeof erro === 'string' ? erro : `Falha na requisição (${resposta.status}).`, resposta.status, dados);
+            const detalhe = dados['detalhe'];
+            const base = typeof erro === 'string' ? erro : `Falha na requisição (${resposta.status}).`;
+            throw new ApiError(typeof detalhe === 'string' ? `${base} (${detalhe})` : base, resposta.status, dados);
         }
         return dados as unknown as T;
     }
 
+    public getInicializacao(): Promise<Inicializacao> { return this.request<Inicializacao>('inicializacao'); }
     public getSetores(): Promise<Setor[]> { return this.request<Setor[]>('setores'); }
+
+    public criarSetor(nome: string, meta_percentual: number): Promise<{ id_setor: number }> {
+        return this.request<{ id_setor: number }>('setores', 'POST', {}, { nome, meta_percentual });
+    }
+
+    public excluirSetor(id: number): Promise<unknown> {
+        return this.request('setores', 'DELETE', { id });
+    }
+    public getCargos(): Promise<string[]> { return this.request<string[]>('cargos'); }
 
     public async getAnos(): Promise<number[]> {
         const anos = await this.request<unknown[]>('anos');
@@ -228,8 +287,8 @@ class ApiService {
 
     public getFuncionarios(): Promise<Funcionario[]> { return this.request<Funcionario[]>('funcionarios'); }
 
-    public criarFuncionario(codigo_matricula: string, setor: string, nome: string, cargo: string): Promise<unknown> {
-        return this.request('funcionarios', 'POST', {}, { codigo_matricula, setor, nome, cargo });
+    public criarFuncionario(codigo_matricula: string, setor: string, nome: string, cargo: string): Promise<{ id_funcionario: number }> {
+        return this.request<{ id_funcionario: number }>('funcionarios', 'POST', {}, { codigo_matricula, setor, nome, cargo });
     }
 
     public excluirFuncionario(id: number, forcar: boolean): Promise<unknown> {
@@ -238,8 +297,8 @@ class ApiService {
 
     public getEsteiras(): Promise<Esteira[]> { return this.request<Esteira[]>('esteiras'); }
 
-    public criarEsteira(codigo_patrimonio: string, nome_descricao: string): Promise<unknown> {
-        return this.request('esteiras', 'POST', {}, { codigo_patrimonio, nome_descricao });
+    public criarEsteira(codigo_patrimonio: string, nome_descricao: string): Promise<{ id_esteira: number }> {
+        return this.request<{ id_esteira: number }>('esteiras', 'POST', {}, { codigo_patrimonio, nome_descricao });
     }
 
     public excluirEsteira(id: number, forcar: boolean): Promise<unknown> {
@@ -253,40 +312,52 @@ class ApiService {
     public getDashboard(ano: number, mesInicio: number, mesFim: number, esteira: string): Promise<LinhaDashboard[]> {
         return this.request<LinhaDashboard[]>('dashboard', 'GET', { ano, mes_ini: mesInicio, mes_fim: mesFim, id_esteira: esteira });
     }
+
+    public salvarConfiguracao(chave: string, valor: ValorConfig): Promise<{ chave: string; valor: ValorConfig }> {
+        return this.request('configuracoes', 'POST', {}, { chave, valor });
+    }
+
+    public salvarPerfil(nome: string, email: string): Promise<Usuario> {
+        return this.request<Usuario>('perfil', 'POST', {}, { nome, email });
+    }
+
+    public salvarTema(tema: string): Promise<unknown> {
+        return this.request('tema', 'POST', {}, { tema });
+    }
 }
 
 // ============================================================
-// 5. TEMA E NAVEGAÇÃO
+// 6. TEMA, MENUS, PERFIL, NOTIFICAÇÕES E CONFIGURAÇÕES
 // ============================================================
 class ThemeManager {
-    private readonly CHAVE: string = 'nexus_theme';
+    private readonly api: ApiService;
 
-    constructor() {
-        if (localStorage.getItem(this.CHAVE) === 'dark') this.aplicar(true);
+    constructor(api: ApiService, temaInicial: string) {
+        this.api = api;
+        this.aplicar(temaInicial === 'dark');
         elemento('btn-theme')?.addEventListener('click', () => {
-            this.aplicar(document.body.getAttribute('data-theme') !== 'dark');
+            const escuro = document.body.getAttribute('data-theme') !== 'dark';
+            this.aplicar(escuro);
             window.dispatchEvent(new CustomEvent('nexus:tema'));
+            this.api.salvarTema(escuro ? 'dark' : 'light').catch(mostrarErro);
         });
     }
 
     private aplicar(escuro: boolean): void {
         if (escuro) document.body.setAttribute('data-theme', 'dark');
         else document.body.removeAttribute('data-theme');
-        localStorage.setItem(this.CHAVE, escuro ? 'dark' : 'light');
         const icone = elemento('theme-icon');
         if (icone) icone.className = escuro ? 'fas fa-sun' : 'fas fa-moon';
     }
 }
 
 class UIManager {
-    constructor() {
-        document.querySelectorAll('.nav-link[data-target]').forEach(link => {
-            link.addEventListener('click', (e: Event) => {
-                e.preventDefault();
-                const alvo = (e.currentTarget as HTMLElement).getAttribute('data-target');
-                if (alvo) this.abrirAba(alvo);
-            });
-        });
+    private readonly abas: Aba[];
+
+    constructor(abas: Aba[]) {
+        this.abas = abas;
+        this.montarMenu('menu-lateral', 'menu');
+        this.montarMenu('menu-perfil-links', 'perfil');
 
         const alternar = (menuId: string, e: Event) => {
             e.stopPropagation();
@@ -299,35 +370,173 @@ class UIManager {
         window.addEventListener('click', () => {
             document.querySelectorAll('.dropdown-content').forEach(el => el.classList.remove('show'));
         });
+
+        const primeira = abas.find(a => a.posicao === 'menu');
+        if (primeira) this.abrirAba(primeira.codigo);
     }
 
-    private abrirAba(id: string): void {
+    private montarMenu(containerId: string, posicao: Aba['posicao']): void {
+        const container = elementoObrigatorio(containerId);
+        container.innerHTML = '';
+        this.abas.filter(a => a.posicao === posicao).forEach(aba => {
+            const link = document.createElement('a');
+            link.href = '#';
+            link.className = 'nav-link';
+            link.setAttribute('data-target', aba.codigo);
+            const icone = document.createElement('i');
+            icone.className = aba.icone;
+            link.appendChild(icone);
+            link.appendChild(document.createTextNode(` ${aba.rotulo_menu}`));
+            link.addEventListener('click', (e: Event) => { e.preventDefault(); this.abrirAba(aba.codigo); });
+            container.appendChild(link);
+        });
+    }
+
+    private abrirAba(codigo: string): void {
         document.querySelectorAll('.tab-content, .nav-link').forEach(el => el.classList.remove('active'));
-        elemento(id)?.classList.add('active');
-        document.querySelectorAll(`.nav-link[data-target="${id}"]`).forEach(el => el.classList.add('active'));
+        elemento(codigo)?.classList.add('active');
+        document.querySelectorAll(`.nav-link[data-target="${codigo}"]`).forEach(el => el.classList.add('active'));
 
         const barra = elemento('barra-filtros');
-        if (barra) barra.style.display = id === 'dashboard' ? 'flex' : 'none';
+        if (barra) barra.style.display = codigo === 'dashboard' ? 'flex' : 'none';
 
-        const titulos = TITULOS[id];
-        if (titulos) {
+        const aba = this.abas.find(a => a.codigo === codigo);
+        if (aba) {
             const titulo = elemento('topbar-titulo');
             const subtitulo = elemento('topbar-subtitulo');
-            if (titulo) titulo.textContent = titulos[0];
-            if (subtitulo) subtitulo.textContent = titulos[1];
+            if (titulo) titulo.textContent = aba.titulo;
+            if (subtitulo) subtitulo.textContent = aba.subtitulo;
         }
         document.querySelectorAll('.dropdown-content').forEach(el => el.classList.remove('show'));
     }
 }
 
+class PerfilManager {
+    private readonly api: ApiService;
+    private usuario: Usuario | null;
+
+    constructor(api: ApiService, usuario: Usuario | null) {
+        this.api = api;
+        this.usuario = usuario;
+        this.renderizar();
+
+        elemento<HTMLFormElement>('form-perfil')?.addEventListener('submit', async (e: Event) => {
+            e.preventDefault();
+            try {
+                this.usuario = await this.api.salvarPerfil(
+                    elementoObrigatorio<HTMLInputElement>('perfil-nome').value.trim(),
+                    elementoObrigatorio<HTMLInputElement>('perfil-email').value.trim()
+                );
+                this.renderizar();
+                notificar('Perfil atualizado.');
+            } catch (err) { mostrarErro(err); }
+        });
+    }
+
+    private renderizar(): void {
+        const u = this.usuario;
+        if (!u) return;
+        const definirImagem = (id: string) => { const img = elemento<HTMLImageElement>(id); if (img) img.src = u.avatar_url; };
+        definirImagem('avatar-topbar');
+        definirImagem('perfil-avatar');
+        const apelido = elemento('nome-topbar');
+        if (apelido) apelido.textContent = u.apelido;
+        const nome = elemento<HTMLInputElement>('perfil-nome');
+        if (nome) nome.value = u.nome;
+        const email = elemento<HTMLInputElement>('perfil-email');
+        if (email) email.value = u.email;
+    }
+}
+
+function renderizarNotificacoes(lista: Notificacao[]): void {
+    const container = elementoObrigatorio('notif-lista');
+    container.innerHTML = '';
+    lista.forEach(n => {
+        const link = document.createElement('a');
+        link.href = '#';
+        link.addEventListener('click', (e: Event) => e.preventDefault());
+        const icone = document.createElement('i');
+        icone.className = n.icone;
+        link.appendChild(icone);
+        link.appendChild(document.createTextNode(` ${n.mensagem}`));
+        container.appendChild(link);
+    });
+
+    const naoLidas = lista.filter(n => !n.lida).length;
+    const badge = elementoObrigatorio('notif-badge');
+    badge.textContent = String(naoLidas);
+    badge.hidden = naoLidas === 0;
+}
+
+class ConfiguracoesManager {
+    private readonly api: ApiService;
+
+    constructor(api: ApiService) {
+        this.api = api;
+        this.renderizar();
+    }
+
+    private renderizar(): void {
+        const lista = elementoObrigatorio('lista-configuracoes');
+        lista.innerHTML = '';
+        App.configuracoes.filter(c => c.editavel).forEach(cfg => {
+            const item = document.createElement('div');
+            item.className = 'setting-item';
+            const info = document.createElement('div');
+            info.innerHTML = `<strong>${escapeHtml(cfg.titulo)}</strong><p class="text-muted" style="font-size: 0.85rem;">${escapeHtml(cfg.descricao)}</p>`;
+            item.appendChild(info);
+            item.appendChild(this.criarControle(cfg));
+            lista.appendChild(item);
+        });
+    }
+
+    private criarControle(cfg: Configuracao): HTMLElement {
+        if (cfg.tipo === 'booleano') {
+            const rotulo = document.createElement('label');
+            rotulo.className = 'toggle-switch';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = cfg.valor === true;
+            input.addEventListener('change', () => { void this.salvar(cfg, input.checked); });
+            const slider = document.createElement('span');
+            slider.className = 'slider';
+            rotulo.appendChild(input);
+            rotulo.appendChild(slider);
+            return rotulo;
+        }
+
+        const input = document.createElement('input');
+        input.className = 'form-input setting-input';
+        input.type = cfg.tipo === 'numero' ? 'number' : 'text';
+        input.value = String(cfg.valor);
+        if (cfg.minimo !== null) input.min = String(cfg.minimo);
+        if (cfg.maximo !== null) input.max = String(cfg.maximo);
+        input.addEventListener('change', () => {
+            void this.salvar(cfg, cfg.tipo === 'numero' ? Number(input.value) : input.value.trim());
+        });
+        return input;
+    }
+
+    private async salvar(cfg: Configuracao, valor: ValorConfig): Promise<void> {
+        try {
+            const resposta = await this.api.salvarConfiguracao(cfg.chave, valor);
+            cfg.valor = resposta.valor;
+            notificar('Configuração salva.');
+            window.dispatchEvent(new CustomEvent('nexus:config'));
+        } catch (e) {
+            mostrarErro(e);
+            this.renderizar();
+        }
+    }
+}
+
 // ============================================================
-// 6. DASHBOARD
+// 7. DASHBOARD
 // ============================================================
 class DashboardManager {
     private readonly api: ApiService;
     private graficos: any[] = [];
     private metasSetor: Record<string, number> = {};
-    private esteiras: Esteira[] = [];
     private ultimosDados: LinhaDashboard[] = [];
     private requisicaoAtual: number = 0;
 
@@ -338,6 +547,7 @@ class DashboardManager {
         elemento('filtro-visao')?.addEventListener('change', () => this.renderizar());
         elemento('btn-limpar-filtros')?.addEventListener('click', () => this.limparFiltros());
         window.addEventListener('nexus:tema', () => this.renderizar());
+        window.addEventListener('nexus:config', () => this.renderizar());
     }
 
     // ---------- dados de apoio ----------
@@ -347,7 +557,6 @@ class DashboardManager {
     }
 
     public definirEsteiras(esteiras: Esteira[]): void {
-        this.esteiras = esteiras;
         const select = elemento<HTMLSelectElement>('filtro-esteira');
         if (!select) return;
         const atual = select.value;
@@ -357,20 +566,26 @@ class DashboardManager {
         if (esteiras.some(e => String(e.id_esteira) === atual)) select.value = atual;
     }
 
-    public async carregarAnos(): Promise<void> {
+    public async prepararFiltros(): Promise<void> {
+        const periodo = elementoObrigatorio<HTMLSelectElement>('filtro-mes');
+        periodo.innerHTML = '';
+        App.periodos.forEach(p => periodo.appendChild(criarOption(p.codigo, p.rotulo)));
+
+        const visao = elementoObrigatorio<HTMLSelectElement>('filtro-visao');
+        visao.innerHTML = '';
+        App.visoes.forEach(v => visao.appendChild(criarOption(v.codigo, v.rotulo)));
+
         const anos = await this.api.getAnos();
-        const select = elementoObrigatorio<HTMLSelectElement>('filtro-ano');
         const atual = new Date().getFullYear();
         const lista = anos.length > 0 ? anos : [atual];
+        const select = elementoObrigatorio<HTMLSelectElement>('filtro-ano');
         select.innerHTML = '';
         lista.forEach(a => select.appendChild(criarOption(String(a), String(a))));
         select.value = String(lista.includes(atual) ? atual : Math.max(...lista));
     }
 
     private limparFiltros(): void {
-        elementoObrigatorio<HTMLSelectElement>('filtro-mes').value = 'todos';
-        elementoObrigatorio<HTMLSelectElement>('filtro-visao').value = 'geral';
-        elementoObrigatorio<HTMLSelectElement>('filtro-esteira').value = 'todas';
+        ['filtro-mes', 'filtro-visao', 'filtro-esteira'].forEach(id => { elementoObrigatorio<HTMLSelectElement>(id).selectedIndex = 0; });
         void this.atualizarDashboard();
     }
 
@@ -389,7 +604,7 @@ class DashboardManager {
         const id = ++this.requisicaoAtual;
         elemento('dashboard')?.classList.add('carregando');
         try {
-            const dados = await this.api.getDashboard(filtros.ano, filtros.periodo.inicio, filtros.periodo.fim, filtros.esteira);
+            const dados = await this.api.getDashboard(filtros.ano, filtros.periodo.mes_inicio, filtros.periodo.mes_fim, filtros.esteira);
             if (id !== this.requisicaoAtual) return; // chegou uma requisição mais nova
             this.ultimosDados = dados;
             this.renderizar();
@@ -434,14 +649,18 @@ class DashboardManager {
     }
 
     private corTexto(): string {
-        return getComputedStyle(document.body).getPropertyValue('--text-main').trim() || '#1e293b';
+        return getComputedStyle(document.body).getPropertyValue('--text-main').trim();
+    }
+
+    private metaDoSetor(setor: string): number {
+        return this.metasSetor[setor] ?? metaPadrao();
     }
 
     // ---------- cálculos ----------
     private metaDe(linhas: LinhaDashboard[]): number {
         const total = linhas.reduce((s, l) => s + l.horas_ronda, 0);
-        if (total === 0) return META_PADRAO;
-        return linhas.reduce((s, l) => s + (this.metasSetor[l.setor] ?? META_PADRAO) * l.horas_ronda, 0) / total;
+        if (total === 0) return metaPadrao();
+        return linhas.reduce((s, l) => s + this.metaDoSetor(l.setor) * l.horas_ronda, 0) / total;
     }
 
     private agrupar(linhas: LinhaDashboard[], modo: 'mes' | 'esteira' | 'setor'): Agregado[] {
@@ -471,27 +690,30 @@ class DashboardManager {
         const delta = prod - meta;
         const esteirasAtivas = new Set(dados.map(d => d.id_esteira)).size;
 
-        const kpi = (classe: string, icone: string, titulo: string, valor: string, detalhe: string): string => `
-            <div class="kpi-card ${classe}">
-                <div class="kpi-icone"><i class="${icone}"></i></div>
-                <div><div class="kpi-title">${titulo}</div><div class="kpi-valor">${valor}</div><div class="kpi-detalhe">${detalhe}</div></div>
+        const kpi = (classe: string, icone: string, titulo: string, valor: string, detalhe: string, cor: string = ''): string => `
+            <div class="kpi-card ${classe}" ${cor ? `style="border-left-color: ${escapeHtml(cor)};"` : ''}>
+                <div class="kpi-icone" ${cor ? `style="color: ${escapeHtml(cor)}; background-color: ${escapeHtml(cor)}1f;"` : ''}><i class="${escapeHtml(icone)}"></i></div>
+                <div><div class="kpi-title">${escapeHtml(titulo)}</div><div class="kpi-valor">${valor}</div><div class="kpi-detalhe">${detalhe}</div></div>
             </div>`;
+
+        const perdas = App.categorias.filter(c => c.perda).map(c => {
+            const horas = horasDe(t, c.chave);
+            return kpi('', c.icone, c.rotulo, formatarPercentual(percentual(horas, t.horas_ronda)), `${formatarNumero(horas, 0)} h`, c.cor);
+        }).join('');
 
         container.innerHTML =
             kpi(delta >= 0 ? 'kpi-ok' : 'kpi-falha', 'fas fa-bullseye', 'Produtividade Geral', formatarPercentual(prod),
                 `Meta ${formatarPercentual(meta)} · ${delta >= 0 ? '+' : ''}${formatarNumero(delta)} p.p.`) +
             kpi('kpi-neutro', 'fas fa-clock', 'Horas Operadas', `${formatarNumero(t.horas_ronda, 0)} h`, `${esteirasAtivas} esteiras ativas`) +
-            kpi('kpi-improdutivas', 'fas fa-hourglass-half', 'Improdutivas', formatarPercentual(percentual(t.horas_improdutivas, t.horas_ronda)), `${formatarNumero(t.horas_improdutivas, 0)} h`) +
-            kpi('kpi-reparo', 'fas fa-screwdriver-wrench', 'Reparo', formatarPercentual(percentual(t.horas_reparo, t.horas_ronda)), `${formatarNumero(t.horas_reparo, 0)} h`) +
-            kpi('kpi-flutuantes', 'fas fa-wave-square', 'Flutuantes', formatarPercentual(percentual(t.horas_flutuantes, t.horas_ronda)), `${formatarNumero(t.horas_flutuantes, 0)} h`);
+            perdas;
     }
 
     // ---------- visões ----------
     private renderizarVisaoGeral(dados: LinhaDashboard[], filtros: Filtros, grid: HTMLElement): void {
-        if (filtros.periodo.inicio !== filtros.periodo.fim) {
+        if (filtros.periodo.mes_inicio !== filtros.periodo.mes_fim) {
             const porMes = this.agrupar(dados, 'mes').sort((a, b) => a.mes - b.mes);
             const metas = porMes.map(m => this.metaDe(dados.filter(d => d.mes === m.mes)));
-            this.graficoCombinado(grid, `Evolução Mensal — ${filtros.periodo.rotulo} de ${filtros.ano}`, 'Visão consolidada de todos os setores', porMes, metas, true);
+            this.graficoCombinado(grid, `Evolução Mensal — ${filtros.periodo.rotulo} · ${filtros.ano}`, 'Visão consolidada de todos os setores', porMes, metas, true);
         }
         this.graficoSetores(grid, this.agrupar(dados, 'setor'));
 
@@ -500,21 +722,24 @@ class DashboardManager {
         titulo.textContent = 'Desempenho por Setor';
         grid.appendChild(titulo);
 
+        const visao = App.visoes.find(v => v.codigo === filtros.visao);
+        const piores = visao?.ordenacao === 'produtividade_asc';
+        const limite = cfgNumero('top_esteiras');
+
         Object.keys(this.metasSetor).forEach(nomeSetor => {
             const dSetor = dados.filter(d => d.setor === nomeSetor);
             if (dSetor.length === 0) return;
 
             const porEsteira = this.agrupar(dSetor, 'esteira');
-            const piores = filtros.visao === 'piores';
             porEsteira.sort((a, b) => piores ? a.prodPura - b.prodPura : b.horas_ronda - a.horas_ronda);
 
-            const meta = this.metasSetor[nomeSetor] ?? META_PADRAO;
+            const meta = this.metaDoSetor(nomeSetor);
             const media = produtividade(totalizar(dSetor));
             const destaque = `<div class="kpi-inline"><span class="kpi-title">Média do setor</span><span class="kpi-valor ${media >= meta ? 'good' : 'danger'}">${formatarPercentual(media)}</span></div>`;
-            const subtitulo = `Meta ${meta}% · ${piores ? `${TOP_ESTEIRAS} piores` : `${TOP_ESTEIRAS} maiores volumes`} de ${porEsteira.length} esteiras`;
+            const subtitulo = `Meta ${meta}% · ${limite} ${visao?.descricao_curta ?? ''} de ${porEsteira.length} esteiras`;
 
-            const slice = porEsteira.slice(0, TOP_ESTEIRAS);
-            this.graficoCombinado(grid, nomeSetor, subtitulo, slice, slice.map(() => meta), false, destaque);
+            const recorte = porEsteira.slice(0, limite);
+            this.graficoCombinado(grid, nomeSetor, subtitulo, recorte, recorte.map(() => meta), false, destaque);
         });
     }
 
@@ -542,17 +767,19 @@ class DashboardManager {
         const ctx = this.criarCard(grid, titulo, subtitulo, largo, extra);
         if (!ctx) return;
 
+        const barras = App.categorias.map(c => ({
+            type: 'bar', label: c.rotulo, data: dados.map(d => horasDe(d, c.chave)),
+            backgroundColor: c.cor, yAxisID: 'y', order: 2
+        }));
+
         this.graficos.push(new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: dados.map(d => d.rotulo),
                 datasets: [
                     { type: 'line', label: 'Produtividade (%)', data: dados.map(d => d.prodPura), borderColor: this.corTexto(), backgroundColor: this.corTexto(), yAxisID: 'y1', tension: 0.3, borderWidth: 3, order: 1 },
-                    { type: 'line', label: 'Meta (%)', data: metas, borderColor: CORES.meta, borderDash: [5, 5], pointRadius: 0, yAxisID: 'y1', borderWidth: 2, order: 0 },
-                    { type: 'bar', label: 'Produtivas', data: dados.map(d => d.horas_produtivas), backgroundColor: CORES.produtivas, yAxisID: 'y', order: 2 },
-                    { type: 'bar', label: 'Improdutivas', data: dados.map(d => d.horas_improdutivas), backgroundColor: CORES.improdutivas, yAxisID: 'y', order: 2 },
-                    { type: 'bar', label: 'Reparo', data: dados.map(d => d.horas_reparo), backgroundColor: CORES.reparo, yAxisID: 'y', order: 2 },
-                    { type: 'bar', label: 'Flutuantes', data: dados.map(d => d.horas_flutuantes), backgroundColor: CORES.flutuantes, yAxisID: 'y', order: 2 }
+                    { type: 'line', label: 'Meta (%)', data: metas, borderColor: cfgTexto('cor_meta'), borderDash: [5, 5], pointRadius: 0, yAxisID: 'y1', borderWidth: 2, order: 0 },
+                    ...barras
                 ]
             },
             options: {
@@ -575,15 +802,17 @@ class DashboardManager {
     private graficoSetores(grid: HTMLElement, porSetor: Agregado[]): void {
         const ctx = this.criarCard(grid, 'Produtividade por Setor vs Meta', 'Verde: meta atingida · Vermelho: abaixo da meta', false);
         if (!ctx) return;
-        const linhas = porSetor.map(s => ({ nome: s.setor, prod: s.prodPura, meta: this.metasSetor[s.setor] ?? META_PADRAO }));
+        const linhas = porSetor.map(s => ({ nome: s.setor, prod: s.prodPura, meta: this.metaDoSetor(s.setor) }));
+        const corOk = cfgTexto('cor_ok');
+        const corFalha = cfgTexto('cor_falha');
 
         this.graficos.push(new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: linhas.map(l => l.nome),
                 datasets: [
-                    { label: 'Produtividade (%)', data: linhas.map(l => l.prod), backgroundColor: linhas.map(l => l.prod >= l.meta ? CORES.produtivas : CORES.reparo), borderRadius: 6 },
-                    { label: 'Meta (%)', data: linhas.map(l => l.meta), backgroundColor: 'rgba(37, 99, 235, 0.35)', borderRadius: 6 }
+                    { label: 'Produtividade (%)', data: linhas.map(l => l.prod), backgroundColor: linhas.map(l => l.prod >= l.meta ? corOk : corFalha), borderRadius: 6 },
+                    { label: 'Meta (%)', data: linhas.map(l => l.meta), backgroundColor: `${cfgTexto('cor_meta')}59`, borderRadius: 6 }
                 ]
             },
             options: {
@@ -600,11 +829,10 @@ class DashboardManager {
 
     // ---------- relatório ----------
     private rankingCausas(t: Horas) {
-        return [
-            { titulo: 'Horas improdutivas', acao: 'Reforçar o treinamento operacional e auditar o setup das máquinas.', horas: t.horas_improdutivas },
-            { titulo: 'Horas de reparo', acao: 'Revisar o cronograma de manutenção preventiva com a equipe técnica.', horas: t.horas_reparo },
-            { titulo: 'Horas flutuantes', acao: 'Acionar logística/PCP e alinhar o suprimento de material.', horas: t.horas_flutuantes }
-        ].map(c => ({ ...c, pct: percentual(c.horas, t.horas_ronda) })).sort((a, b) => b.horas - a.horas);
+        return App.categorias.filter(c => c.perda).map(c => {
+            const horas = horasDe(t, c.chave);
+            return { titulo: c.rotulo_longo, acao: c.acao ?? '', horas, pct: percentual(horas, t.horas_ronda) };
+        }).sort((a, b) => b.horas - a.horas);
     }
 
     private gerarRelatorio(dados: LinhaDashboard[], individual: boolean): void {
@@ -630,7 +858,7 @@ class DashboardManager {
         if (!individual) html += this.tabelaSetores(dados) + this.tabelaCriticas(dados);
 
         const plano = this.rankingCausas(total)
-            .map(c => `<li><b>${c.titulo} (${formatarPercentual(c.pct)} das horas operadas):</b> ${c.acao}</li>`).join('');
+            .map(c => `<li><b>${escapeHtml(c.titulo)} (${formatarPercentual(c.pct)} das horas operadas):</b> ${escapeHtml(c.acao)}</li>`).join('');
         html += `<div class="insight-card positive"><div class="insight-title">🛠️ Plano de Ação (priorizado pelo maior impacto)</div><ul class="action-list">${plano}</ul></div>`;
         corpo.innerHTML = html;
     }
@@ -641,7 +869,7 @@ class DashboardManager {
             if (d.length === 0) return '';
             const t = totalizar(d);
             const real = produtividade(t);
-            const meta = this.metasSetor[nome] ?? META_PADRAO;
+            const meta = this.metaDoSetor(nome);
             const gap = real - meta;
             const causa = gap >= 0 ? '—' : escapeHtml(this.rankingCausas(t)[0]?.titulo);
             return `<tr>
@@ -656,14 +884,14 @@ class DashboardManager {
 
     private tabelaCriticas(dados: LinhaDashboard[]): string {
         const piores = this.agrupar(dados, 'esteira').filter(e => e.horas_ronda > 0).sort((a, b) => a.prodPura - b.prodPura).slice(0, 5);
-        const linhas = piores.map(e => `<tr><td>${escapeHtml(e.nome_esteira)}</td><td>${escapeHtml(e.setor)}</td><td class="text-danger">${formatarPercentual(e.prodPura)}</td><td>${this.metasSetor[e.setor] ?? META_PADRAO}%</td></tr>`).join('');
+        const linhas = piores.map(e => `<tr><td>${escapeHtml(e.nome_esteira)}</td><td>${escapeHtml(e.setor)}</td><td class="text-danger">${formatarPercentual(e.prodPura)}</td><td>${this.metaDoSetor(e.setor)}%</td></tr>`).join('');
         return `<div class="insight-card negative"><div class="insight-title">⚠️ 5 Esteiras Mais Críticas</div>
             <div class="table-responsive"><table class="data-table"><thead><tr><th>Esteira</th><th>Setor</th><th>Produtividade</th><th>Meta do setor</th></tr></thead><tbody>${linhas}</tbody></table></div></div>`;
     }
 }
 
 // ============================================================
-// 7. TABELA GERENCIÁVEL 
+// 8. TABELA GERENCIÁVEL (busca + paginação + exclusão)
 // ============================================================
 interface OpcoesTabela<T> {
     corpoId: string;
@@ -681,10 +909,12 @@ class TabelaGerenciavel<T> {
     private readonly opcoes: OpcoesTabela<T>;
     private itens: T[] = [];
     private pagina: number = 1;
+    private destaque: ((item: T) => boolean) | null = null;
 
     constructor(opcoes: OpcoesTabela<T>) {
         this.opcoes = opcoes;
         elemento<HTMLInputElement>(opcoes.buscaId)?.addEventListener('input', debounce(() => this.reiniciar(), 200));
+        window.addEventListener('nexus:config', () => this.reiniciar());
     }
 
     public definirItens(itens: T[]): void {
@@ -694,27 +924,41 @@ class TabelaGerenciavel<T> {
 
     public reiniciar(): void {
         this.pagina = 1;
+        this.destaque = null;
+        this.renderizar();
+    }
+
+    /** Limpa a busca, abre a página do registro e o destaca. */
+    public mostrar(predicado: (item: T) => boolean): void {
+        const busca = elemento<HTMLInputElement>(this.opcoes.buscaId);
+        if (busca) busca.value = '';
+        this.destaque = predicado;
+        const indice = this.filtrar().findIndex(predicado);
+        if (indice >= 0) this.pagina = Math.floor(indice / cfgNumero('itens_por_pagina')) + 1;
         this.renderizar();
     }
 
     private filtrar(): T[] {
-        const termo = (elemento<HTMLInputElement>(this.opcoes.buscaId)?.value ?? '').trim().toLowerCase();
+        const palavras = normalizarTexto(elemento<HTMLInputElement>(this.opcoes.buscaId)?.value ?? '').split(/\s+/).filter(p => p !== '');
         const extra = this.opcoes.filtroExtra;
-        return this.itens.filter(i =>
-            (termo === '' || this.opcoes.textoBusca(i).toLowerCase().includes(termo)) && (!extra || extra(i)));
+        return this.itens.filter(i => {
+            const texto = normalizarTexto(this.opcoes.textoBusca(i));
+            return palavras.every(p => texto.includes(p)) && (!extra || extra(i));
+        });
     }
 
     public renderizar(): void {
         const corpo = elemento(this.opcoes.corpoId);
         if (!corpo) return;
 
+        const porPagina = cfgNumero('itens_por_pagina');
         const filtrados = this.filtrar();
-        const totalPaginas = Math.max(1, Math.ceil(filtrados.length / ITENS_POR_PAGINA));
+        const totalPaginas = Math.max(1, Math.ceil(filtrados.length / porPagina));
         this.pagina = Math.min(this.pagina, totalPaginas);
-        const inicio = (this.pagina - 1) * ITENS_POR_PAGINA;
+        const inicio = (this.pagina - 1) * porPagina;
 
         corpo.innerHTML = '';
-        const visiveis = filtrados.slice(inicio, inicio + ITENS_POR_PAGINA);
+        const visiveis = filtrados.slice(inicio, inicio + porPagina);
         if (visiveis.length === 0) {
             const tr = document.createElement('tr');
             const td = document.createElement('td');
@@ -727,6 +971,7 @@ class TabelaGerenciavel<T> {
 
         visiveis.forEach(item => {
             const tr = document.createElement('tr');
+            if (this.destaque && this.destaque(item)) tr.className = 'linha-destaque';
             this.opcoes.colunas.forEach(coluna => {
                 const td = document.createElement('td');
                 td.textContent = coluna(item);
@@ -755,11 +1000,11 @@ class TabelaGerenciavel<T> {
         if (!container) return;
         container.innerHTML = '';
 
-        const botao = (texto: string, destino: number, desabilitado: boolean): HTMLButtonElement => {
+        const botao = (icone: string, destino: number, desabilitado: boolean): HTMLButtonElement => {
             const b = document.createElement('button');
             b.type = 'button';
             b.className = 'btn btn-outline btn-sm';
-            b.innerHTML = texto;
+            b.innerHTML = `<i class="fas ${icone}"></i>`;
             b.disabled = desabilitado;
             b.addEventListener('click', () => { this.pagina = destino; this.renderizar(); });
             return b;
@@ -767,20 +1012,21 @@ class TabelaGerenciavel<T> {
         const info = document.createElement('span');
         info.textContent = `Página ${this.pagina} de ${totalPaginas}`;
 
-        container.appendChild(botao('<i class="fas fa-chevron-left"></i>', this.pagina - 1, this.pagina <= 1));
+        container.appendChild(botao('fa-chevron-left', this.pagina - 1, this.pagina <= 1));
         container.appendChild(info);
-        container.appendChild(botao('<i class="fas fa-chevron-right"></i>', this.pagina + 1, this.pagina >= totalPaginas));
+        container.appendChild(botao('fa-chevron-right', this.pagina + 1, this.pagina >= totalPaginas));
     }
 }
 
 // ============================================================
-// 8. CADASTROS 
+// 9. CADASTROS (funcionários, esteiras, apontamentos)
 // ============================================================
 class CadastroManager {
     private readonly api: ApiService;
     private readonly dashboard: DashboardManager;
     private readonly tabelaFuncionarios: TabelaGerenciavel<Funcionario>;
     private readonly tabelaEsteiras: TabelaGerenciavel<Esteira>;
+    private readonly tabelaSetores: TabelaGerenciavel<Setor>;
     private setores: Setor[] = [];
     private funcionarios: Funcionario[] = [];
     private esteiras: Esteira[] = [];
@@ -809,6 +1055,14 @@ class CadastroManager {
             aoExcluir: e => { void this.excluirEsteira(e); }
         });
 
+        this.tabelaSetores = new TabelaGerenciavel<Setor>({
+            corpoId: 'set-corpo', contadorId: 'set-contador', paginacaoId: 'set-paginacao', buscaId: 'busca-set',
+            colunas: [s => s.nome, s => `${formatarNumero(Number(s.meta_percentual))}%`, s => String(s.total_funcionarios)],
+            textoBusca: s => s.nome,
+            rotuloVazio: 'Nenhum setor encontrado.',
+            aoExcluir: s => { void this.excluirSetor(s); }
+        });
+
         elemento('filtro-func-setor')?.addEventListener('change', () => this.tabelaFuncionarios.reiniciar());
         this.iniciarFormularios();
     }
@@ -825,12 +1079,44 @@ class CadastroManager {
         this.atualizarSelects();
         this.tabelaFuncionarios.definirItens(funcionarios);
         this.tabelaEsteiras.definirItens(esteiras);
+        this.tabelaSetores.definirItens(setores);
+        await this.carregarCargos();
+        this.aplicarCargoPadrao();
+        this.aplicarMetaPadraoSetor();
+    }
+
+    private async carregarCargos(): Promise<void> {
+        const lista = elemento('lista-cargos');
+        if (!lista) return;
+        lista.innerHTML = '';
+        (await this.api.getCargos()).forEach(cargo => lista.appendChild(criarOption(cargo, cargo)));
+    }
+
+    private aplicarCargoPadrao(): void {
+        const campo = elemento<HTMLInputElement>('cad-op-cargo');
+        if (campo) campo.value = cfgTexto('cargo_padrao');
+    }
+
+    private aplicarMetaPadraoSetor(): void {
+        const campo = elemento<HTMLInputElement>('cad-setor-meta');
+        if (campo) campo.value = String(metaPadrao());
+    }
+
+    /** Recarrega os setores e propaga para metas, selects, tabelas e gráficos. */
+    private async recarregarSetores(redesenharDashboard: boolean): Promise<void> {
+        this.setores = await this.api.getSetores();
+        this.dashboard.definirSetores(this.setores);
+        this.atualizarSelects();
+        this.tabelaSetores.definirItens(this.setores);
+        if (redesenharDashboard) this.dashboard.renderizar();
     }
 
     private async recarregarFuncionarios(): Promise<void> {
         this.funcionarios = await this.api.getFuncionarios();
         this.atualizarSelects();
         this.tabelaFuncionarios.definirItens(this.funcionarios);
+        await this.carregarCargos();
+        await this.recarregarSetores(false); // atualiza a contagem de funcionários por setor
     }
 
     private async recarregarEsteiras(): Promise<void> {
@@ -841,22 +1127,7 @@ class CadastroManager {
     }
 
     private atualizarSelects(): void {
-        const selFuncionario = elemento<HTMLSelectElement>('ap-operador');
-        if (selFuncionario) {
-            selFuncionario.innerHTML = '';
-            selFuncionario.appendChild(criarOption('', 'Selecione um funcionário...'));
-            const grupos = new Map<string, HTMLOptGroupElement>();
-            this.funcionarios.forEach(f => {
-                let grupo = grupos.get(f.setor);
-                if (!grupo) {
-                    grupo = document.createElement('optgroup');
-                    grupo.label = f.setor;
-                    grupos.set(f.setor, grupo);
-                    selFuncionario.appendChild(grupo);
-                }
-                grupo.appendChild(criarOption(String(f.id_funcionario), `${f.nome} (Matrícula: ${f.codigo_matricula})`));
-            });
-        }
+        this.renderizarOpcoesFuncionario();
 
         const selEsteira = elemento<HTMLSelectElement>('ap-esteira');
         if (selEsteira) {
@@ -883,6 +1154,62 @@ class CadastroManager {
         }
     }
 
+    // ---------- busca de funcionário no apontamento ----------
+    private funcionariosFiltrados(): Funcionario[] {
+        const palavras = normalizarTexto(elemento<HTMLInputElement>('ap-busca-func')?.value ?? '').split(/\s+/).filter(p => p !== '');
+        return this.funcionarios.filter(f => {
+            const texto = normalizarTexto(`${f.nome} ${f.codigo_matricula}`);
+            return palavras.every(p => texto.includes(p));
+        });
+    }
+
+    private renderizarOpcoesFuncionario(): void {
+        const select = elemento<HTMLSelectElement>('ap-operador');
+        if (!select) return;
+        const buscando = (elemento<HTMLInputElement>('ap-busca-func')?.value ?? '').trim() !== '';
+        const anterior = select.value;
+        const encontrados = this.funcionariosFiltrados();
+
+        select.innerHTML = '';
+        select.appendChild(criarOption('', 'Selecione um funcionário...'));
+        const grupos = new Map<string, HTMLOptGroupElement>();
+        encontrados.forEach(f => {
+            let grupo = grupos.get(f.setor);
+            if (!grupo) {
+                grupo = document.createElement('optgroup');
+                grupo.label = f.setor;
+                grupos.set(f.setor, grupo);
+                select.appendChild(grupo);
+            }
+            grupo.appendChild(criarOption(String(f.id_funcionario), `${f.nome} (Matrícula: ${f.codigo_matricula})`));
+        });
+
+        const unico = encontrados.length === 1 ? encontrados[0] : undefined;
+        if (encontrados.some(f => String(f.id_funcionario) === anterior)) select.value = anterior;
+        else if (buscando && unico) select.value = String(unico.id_funcionario);
+
+        const info = elemento('ap-busca-info');
+        if (info) info.textContent = buscando ? `${encontrados.length} encontrado(s) de ${this.funcionarios.length}` : `${this.funcionarios.length} funcionários`;
+    }
+
+    // ---------- setores ----------
+    private async excluirSetor(setor: Setor): Promise<void> {
+        try {
+            const confirmacao = await Swal.fire({
+                title: 'Confirmar exclusão',
+                html: `Deseja realmente excluir o setor <b>${escapeHtml(setor.nome)}</b>?`,
+                icon: 'warning', showCancelButton: true, reverseButtons: true,
+                confirmButtonText: 'Sim, excluir', cancelButtonText: 'Cancelar', confirmButtonColor: cfgTexto('cor_falha')
+            });
+            if (!confirmacao.isConfirmed) return;
+            await this.api.excluirSetor(setor.id_setor);
+            await this.recarregarSetores(true);
+            notificar(`Setor ${setor.nome} excluído.`);
+        } catch (e) {
+            mostrarErro(e); // ex.: setor ainda possui funcionários
+        }
+    }
+
     // ---------- exclusão ----------
     private async confirmarExclusao(
         descricao: string,
@@ -893,7 +1220,7 @@ class CadastroManager {
             title: 'Confirmar exclusão',
             html: `Deseja realmente excluir <b>${escapeHtml(descricao)}</b>?`,
             icon: 'warning', showCancelButton: true, reverseButtons: true,
-            confirmButtonText: 'Sim, excluir', cancelButtonText: 'Cancelar', confirmButtonColor: '#ef4444'
+            confirmButtonText: 'Sim, excluir', cancelButtonText: 'Cancelar', confirmButtonColor: cfgTexto('cor_falha')
         });
         if (!primeira.isConfirmed) return false;
 
@@ -907,7 +1234,7 @@ class CadastroManager {
                     title: 'Existem registros vinculados',
                     html: avisoVinculos(vinculos),
                     icon: 'warning', showCancelButton: true, reverseButtons: true,
-                    confirmButtonText: 'Excluir tudo', cancelButtonText: 'Cancelar', confirmButtonColor: '#ef4444'
+                    confirmButtonText: 'Excluir tudo', cancelButtonText: 'Cancelar', confirmButtonColor: cfgTexto('cor_falha')
                 });
                 if (!segunda.isConfirmed) return false;
                 await executar(true);
@@ -951,16 +1278,38 @@ class CadastroManager {
 
     // ---------- formulários ----------
     private iniciarFormularios(): void {
+        const busca = elemento<HTMLInputElement>('ap-busca-func');
+        busca?.addEventListener('input', () => this.renderizarOpcoesFuncionario());
+        busca?.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault(); // não envia o formulário; escolhe o primeiro resultado
+            const primeiro = this.funcionariosFiltrados()[0];
+            const select = elemento<HTMLSelectElement>('ap-operador');
+            if (primeiro && select) select.value = String(primeiro.id_funcionario);
+        });
+
+        elemento<HTMLFormElement>('form-setor')?.addEventListener('submit', async (e: Event) => {
+            e.preventDefault();
+            const form = e.target as HTMLFormElement;
+            const nome = elementoObrigatorio<HTMLInputElement>('cad-setor-nome').value.trim();
+            try {
+                await this.api.criarSetor(nome, lerNumero('cad-setor-meta'));
+                await this.recarregarSetores(true);
+                this.tabelaSetores.mostrar(s => s.nome === nome);
+                notificar(`Setor ${nome} criado e disponível em todo o sistema.`);
+                form.reset();
+                this.aplicarMetaPadraoSetor();
+            } catch (err) { mostrarErro(err); }
+        });
         elemento<HTMLFormElement>('form-esteira')?.addEventListener('submit', async (e: Event) => {
             e.preventDefault();
             const form = e.target as HTMLFormElement;
             try {
-                await this.api.criarEsteira(
-                    elementoObrigatorio<HTMLInputElement>('cad-codigo').value.trim().toUpperCase(),
-                    elementoObrigatorio<HTMLInputElement>('cad-descricao').value.trim()
-                );
+                const codigo = elementoObrigatorio<HTMLInputElement>('cad-codigo').value.trim().toUpperCase();
+                const gravada = await this.api.criarEsteira(codigo, elementoObrigatorio<HTMLInputElement>('cad-descricao').value.trim());
                 await this.recarregarEsteiras();
-                notificar('Esteira cadastrada.');
+                this.tabelaEsteiras.mostrar(esteira => esteira.codigo_patrimonio === codigo);
+                notificar(`Esteira cadastrada no banco (ID ${gravada.id_esteira}).`);
                 form.reset();
             } catch (err) { mostrarErro(err); }
         });
@@ -970,15 +1319,20 @@ class CadastroManager {
             const form = e.target as HTMLFormElement;
             const nome = elementoObrigatorio<HTMLInputElement>('cad-op-nome').value.trim();
             try {
-                await this.api.criarFuncionario(
-                    elementoObrigatorio<HTMLInputElement>('cad-op-cracha').value.trim(),
+                const matricula = elementoObrigatorio<HTMLInputElement>('cad-op-cracha').value.trim();
+                const gravado = await this.api.criarFuncionario(
+                    matricula,
                     elementoObrigatorio<HTMLSelectElement>('cad-op-setor').value,
                     nome,
                     elementoObrigatorio<HTMLInputElement>('cad-op-cargo').value.trim()
                 );
                 await this.recarregarFuncionarios();
-                notificar(`Funcionário ${nome} cadastrado.`);
+                const filtroSetor = elemento<HTMLSelectElement>('filtro-func-setor');
+                if (filtroSetor) filtroSetor.value = '';
+                this.tabelaFuncionarios.mostrar(f => f.codigo_matricula === matricula);
+                notificar(`Funcionário ${nome} cadastrado no banco (ID ${gravado.id_funcionario}).`);
                 form.reset();
+                this.aplicarCargoPadrao();
             } catch (err) { mostrarErro(err); }
         });
 
@@ -1019,30 +1373,36 @@ class CadastroManager {
                 await this.dashboard.atualizarDashboard();
             } catch (err) { mostrarErro(err); }
         });
-
-        elemento<HTMLFormElement>('form-perfil')?.addEventListener('submit', (e: Event) => {
-            e.preventDefault();
-            notificar('Perfil atualizado.');
-        });
     }
 }
 
 // ============================================================
-// 9. INICIALIZAÇÃO
+// 10. INICIALIZAÇÃO
 // ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
-    const data = elemento<HTMLInputElement>('ap-data');
-    if (data) data.value = hojeISO();
-
-    new ThemeManager();
-    new UIManager();
-
     const api = new ApiService();
-    const dashboard = new DashboardManager(api);
-    const cadastros = new CadastroManager(api, dashboard);
-
     try {
-        await Promise.all([cadastros.carregarDadosIniciais(), dashboard.carregarAnos()]);
+        const inicio = await api.getInicializacao();
+        App.configuracoes = inicio.configuracoes;
+        App.categorias = inicio.categorias;
+        App.periodos = inicio.periodos;
+        App.visoes = inicio.visoes;
+
+        document.title = cfgTexto('titulo_pagina');
+        elementoObrigatorio('nome-sistema').textContent = cfgTexto('nome_sistema');
+        const data = elemento<HTMLInputElement>('ap-data');
+        if (data) data.value = hojeISO();
+
+        new ThemeManager(api, inicio.usuario?.tema ?? '');
+        new UIManager(inicio.abas);
+        new PerfilManager(api, inicio.usuario);
+        new ConfiguracoesManager(api);
+        renderizarNotificacoes(inicio.notificacoes);
+
+        // 2) Dashboard e cadastros
+        const dashboard = new DashboardManager(api);
+        const cadastros = new CadastroManager(api, dashboard);
+        await Promise.all([cadastros.carregarDadosIniciais(), dashboard.prepararFiltros()]);
         await dashboard.atualizarDashboard();
     } catch (e) {
         mostrarErro(e);

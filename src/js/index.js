@@ -1,31 +1,36 @@
 "use strict";
 // ============================================================
-// 1. CONFIGURAÇÃO
+// 1. INFRAESTRUTURA (único valor fixo: o endereço da API)
 // ============================================================
 const API_URL = 'http://localhost/nexusfab/src/php/api.php';
-const META_PADRAO = 80;
-const TOP_ESTEIRAS = 10;
-const ITENS_POR_PAGINA = 12;
-const CORES = {
-    produtivas: '#10b981',
-    improdutivas: '#f59e0b',
-    reparo: '#ef4444',
-    flutuantes: '#8b5cf6',
-    meta: '#2563eb'
-};
-const MESES = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-const MESES_CURTOS = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-const TITULOS = {
-    dashboard: ['Painel de Gestão e Eficiência', 'Visão Estratégica de Produção'],
-    relatorio: ['Relatório Gerencial', 'Diagnóstico automático e plano de ação'],
-    apontamentos: ['Apontamentos', 'Registro diário de produtividade'],
-    funcionarios: ['Funcionários', 'Cadastro e gestão da equipe'],
-    esteiras: ['Esteiras', 'Cadastro e gestão de máquinas'],
-    perfil: ['Meu Perfil', 'Dados da conta'],
-    configuracoes: ['Configurações', 'Preferências do sistema']
-};
 // ============================================================
-// 3. UTILITÁRIOS
+// 3. DADOS VINDOS DO BANCO (preenchidos em /inicializacao)
+// ============================================================
+const App = { configuracoes: [], categorias: [], periodos: [], visoes: [] };
+function configuracao(chave) {
+    const cfg = App.configuracoes.find(c => c.chave === chave);
+    if (!cfg)
+        throw new Error(`Configuração "${chave}" não encontrada no banco de dados.`);
+    return cfg;
+}
+const cfgNumero = (chave) => Number(configuracao(chave).valor);
+const cfgTexto = (chave) => String(configuracao(chave).valor);
+const metaPadrao = () => cfgNumero('meta_padrao');
+function nomeMes(mes, curto = false) {
+    const periodo = App.periodos.find(p => p.codigo === String(mes));
+    return (curto ? periodo?.rotulo_curto : periodo?.rotulo) ?? `Mês ${mes}`;
+}
+function obterPeriodo(codigo) {
+    const periodo = App.periodos.find(p => p.codigo === codigo);
+    if (!periodo)
+        throw new Error(`Período "${codigo}" não encontrado no banco de dados.`);
+    return periodo;
+}
+function horasDe(h, chave) {
+    return h[`horas_${chave}`] ?? 0;
+}
+// ============================================================
+// 4. UTILITÁRIOS
 // ============================================================
 function escapeHtml(valor) {
     return String(valor ?? '')
@@ -50,15 +55,10 @@ function criarOption(valor, texto) {
 function formatarNumero(valor, casas = 1) {
     return valor.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
 }
-function formatarPercentual(valor) {
-    return `${formatarNumero(valor)}%`;
-}
-function nomeMes(mes, curto = false) {
-    return (curto ? MESES_CURTOS : MESES)[mes] ?? `Mês ${mes}`;
-}
-function percentual(parte, total) {
-    return total > 0 ? (parte / total) * 100 : 0;
-}
+const formatarPercentual = (valor) => `${formatarNumero(valor)}%`;
+const percentual = (parte, total) => (total > 0 ? (parte / total) * 100 : 0);
+/** Minúsculas e sem acentos, para buscas que ignoram "João" vs "joao". */
+const normalizarTexto = (texto) => texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 function hojeISO() {
     const agora = new Date();
     return new Date(agora.getTime() - agora.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -70,9 +70,7 @@ function debounce(fn, ms) {
         timer = window.setTimeout(() => fn(...args), ms);
     };
 }
-function lerNumero(id) {
-    return parseFloat(elementoObrigatorio(id).value);
-}
+const lerNumero = (id) => parseFloat(elementoObrigatorio(id).value);
 function mostrarErro(e) {
     Swal.fire('Erro', e instanceof Error ? e.message : 'Erro inesperado.', 'error');
 }
@@ -93,23 +91,9 @@ function totalizar(linhas) {
     });
     return total;
 }
-function produtividade(h) {
-    return percentual(h.horas_produtivas, h.horas_ronda);
-}
-const PERIODOS = {
-    todos: { inicio: 1, fim: 12, rotulo: 'Ano completo' },
-    S1: { inicio: 1, fim: 6, rotulo: '1º Semestre' },
-    S2: { inicio: 7, fim: 12, rotulo: '2º Semestre' }
-};
-function obterPeriodo(valor) {
-    const fixo = PERIODOS[valor];
-    if (fixo)
-        return fixo;
-    const mes = Number(valor);
-    return { inicio: mes, fim: mes, rotulo: nomeMes(mes) };
-}
+const produtividade = (h) => percentual(h.horas_produtivas, h.horas_ronda);
 // ============================================================
-// 4. API
+// 5. API
 // ============================================================
 class ApiError extends Error {
     status;
@@ -143,11 +127,21 @@ class ApiService {
         catch { /* resposta sem JSON */ }
         if (!resposta.ok) {
             const erro = dados['erro'];
-            throw new ApiError(typeof erro === 'string' ? erro : `Falha na requisição (${resposta.status}).`, resposta.status, dados);
+            const detalhe = dados['detalhe'];
+            const base = typeof erro === 'string' ? erro : `Falha na requisição (${resposta.status}).`;
+            throw new ApiError(typeof detalhe === 'string' ? `${base} (${detalhe})` : base, resposta.status, dados);
         }
         return dados;
     }
+    getInicializacao() { return this.request('inicializacao'); }
     getSetores() { return this.request('setores'); }
+    criarSetor(nome, meta_percentual) {
+        return this.request('setores', 'POST', {}, { nome, meta_percentual });
+    }
+    excluirSetor(id) {
+        return this.request('setores', 'DELETE', { id });
+    }
+    getCargos() { return this.request('cargos'); }
     async getAnos() {
         const anos = await this.request('anos');
         return anos.map(Number);
@@ -172,18 +166,29 @@ class ApiService {
     getDashboard(ano, mesInicio, mesFim, esteira) {
         return this.request('dashboard', 'GET', { ano, mes_ini: mesInicio, mes_fim: mesFim, id_esteira: esteira });
     }
+    salvarConfiguracao(chave, valor) {
+        return this.request('configuracoes', 'POST', {}, { chave, valor });
+    }
+    salvarPerfil(nome, email) {
+        return this.request('perfil', 'POST', {}, { nome, email });
+    }
+    salvarTema(tema) {
+        return this.request('tema', 'POST', {}, { tema });
+    }
 }
 // ============================================================
-// 5. TEMA E NAVEGAÇÃO
+// 6. TEMA, MENUS, PERFIL, NOTIFICAÇÕES E CONFIGURAÇÕES
 // ============================================================
 class ThemeManager {
-    CHAVE = 'nexus_theme';
-    constructor() {
-        if (localStorage.getItem(this.CHAVE) === 'dark')
-            this.aplicar(true);
+    api;
+    constructor(api, temaInicial) {
+        this.api = api;
+        this.aplicar(temaInicial === 'dark');
         elemento('btn-theme')?.addEventListener('click', () => {
-            this.aplicar(document.body.getAttribute('data-theme') !== 'dark');
+            const escuro = document.body.getAttribute('data-theme') !== 'dark';
+            this.aplicar(escuro);
             window.dispatchEvent(new CustomEvent('nexus:tema'));
+            this.api.salvarTema(escuro ? 'dark' : 'light').catch(mostrarErro);
         });
     }
     aplicar(escuro) {
@@ -191,22 +196,17 @@ class ThemeManager {
             document.body.setAttribute('data-theme', 'dark');
         else
             document.body.removeAttribute('data-theme');
-        localStorage.setItem(this.CHAVE, escuro ? 'dark' : 'light');
         const icone = elemento('theme-icon');
         if (icone)
             icone.className = escuro ? 'fas fa-sun' : 'fas fa-moon';
     }
 }
 class UIManager {
-    constructor() {
-        document.querySelectorAll('.nav-link[data-target]').forEach(link => {
-            link.addEventListener('click', (e) => {
-                e.preventDefault();
-                const alvo = e.currentTarget.getAttribute('data-target');
-                if (alvo)
-                    this.abrirAba(alvo);
-            });
-        });
+    abas;
+    constructor(abas) {
+        this.abas = abas;
+        this.montarMenu('menu-lateral', 'menu');
+        this.montarMenu('menu-perfil-links', 'perfil');
         const alternar = (menuId, e) => {
             e.stopPropagation();
             const menu = elemento(menuId);
@@ -219,34 +219,167 @@ class UIManager {
         window.addEventListener('click', () => {
             document.querySelectorAll('.dropdown-content').forEach(el => el.classList.remove('show'));
         });
+        const primeira = abas.find(a => a.posicao === 'menu');
+        if (primeira)
+            this.abrirAba(primeira.codigo);
     }
-    abrirAba(id) {
+    montarMenu(containerId, posicao) {
+        const container = elementoObrigatorio(containerId);
+        container.innerHTML = '';
+        this.abas.filter(a => a.posicao === posicao).forEach(aba => {
+            const link = document.createElement('a');
+            link.href = '#';
+            link.className = 'nav-link';
+            link.setAttribute('data-target', aba.codigo);
+            const icone = document.createElement('i');
+            icone.className = aba.icone;
+            link.appendChild(icone);
+            link.appendChild(document.createTextNode(` ${aba.rotulo_menu}`));
+            link.addEventListener('click', (e) => { e.preventDefault(); this.abrirAba(aba.codigo); });
+            container.appendChild(link);
+        });
+    }
+    abrirAba(codigo) {
         document.querySelectorAll('.tab-content, .nav-link').forEach(el => el.classList.remove('active'));
-        elemento(id)?.classList.add('active');
-        document.querySelectorAll(`.nav-link[data-target="${id}"]`).forEach(el => el.classList.add('active'));
+        elemento(codigo)?.classList.add('active');
+        document.querySelectorAll(`.nav-link[data-target="${codigo}"]`).forEach(el => el.classList.add('active'));
         const barra = elemento('barra-filtros');
         if (barra)
-            barra.style.display = id === 'dashboard' ? 'flex' : 'none';
-        const titulos = TITULOS[id];
-        if (titulos) {
+            barra.style.display = codigo === 'dashboard' ? 'flex' : 'none';
+        const aba = this.abas.find(a => a.codigo === codigo);
+        if (aba) {
             const titulo = elemento('topbar-titulo');
             const subtitulo = elemento('topbar-subtitulo');
             if (titulo)
-                titulo.textContent = titulos[0];
+                titulo.textContent = aba.titulo;
             if (subtitulo)
-                subtitulo.textContent = titulos[1];
+                subtitulo.textContent = aba.subtitulo;
         }
         document.querySelectorAll('.dropdown-content').forEach(el => el.classList.remove('show'));
     }
 }
+class PerfilManager {
+    api;
+    usuario;
+    constructor(api, usuario) {
+        this.api = api;
+        this.usuario = usuario;
+        this.renderizar();
+        elemento('form-perfil')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            try {
+                this.usuario = await this.api.salvarPerfil(elementoObrigatorio('perfil-nome').value.trim(), elementoObrigatorio('perfil-email').value.trim());
+                this.renderizar();
+                notificar('Perfil atualizado.');
+            }
+            catch (err) {
+                mostrarErro(err);
+            }
+        });
+    }
+    renderizar() {
+        const u = this.usuario;
+        if (!u)
+            return;
+        const definirImagem = (id) => { const img = elemento(id); if (img)
+            img.src = u.avatar_url; };
+        definirImagem('avatar-topbar');
+        definirImagem('perfil-avatar');
+        const apelido = elemento('nome-topbar');
+        if (apelido)
+            apelido.textContent = u.apelido;
+        const nome = elemento('perfil-nome');
+        if (nome)
+            nome.value = u.nome;
+        const email = elemento('perfil-email');
+        if (email)
+            email.value = u.email;
+    }
+}
+function renderizarNotificacoes(lista) {
+    const container = elementoObrigatorio('notif-lista');
+    container.innerHTML = '';
+    lista.forEach(n => {
+        const link = document.createElement('a');
+        link.href = '#';
+        link.addEventListener('click', (e) => e.preventDefault());
+        const icone = document.createElement('i');
+        icone.className = n.icone;
+        link.appendChild(icone);
+        link.appendChild(document.createTextNode(` ${n.mensagem}`));
+        container.appendChild(link);
+    });
+    const naoLidas = lista.filter(n => !n.lida).length;
+    const badge = elementoObrigatorio('notif-badge');
+    badge.textContent = String(naoLidas);
+    badge.hidden = naoLidas === 0;
+}
+class ConfiguracoesManager {
+    api;
+    constructor(api) {
+        this.api = api;
+        this.renderizar();
+    }
+    renderizar() {
+        const lista = elementoObrigatorio('lista-configuracoes');
+        lista.innerHTML = '';
+        App.configuracoes.filter(c => c.editavel).forEach(cfg => {
+            const item = document.createElement('div');
+            item.className = 'setting-item';
+            const info = document.createElement('div');
+            info.innerHTML = `<strong>${escapeHtml(cfg.titulo)}</strong><p class="text-muted" style="font-size: 0.85rem;">${escapeHtml(cfg.descricao)}</p>`;
+            item.appendChild(info);
+            item.appendChild(this.criarControle(cfg));
+            lista.appendChild(item);
+        });
+    }
+    criarControle(cfg) {
+        if (cfg.tipo === 'booleano') {
+            const rotulo = document.createElement('label');
+            rotulo.className = 'toggle-switch';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = cfg.valor === true;
+            input.addEventListener('change', () => { void this.salvar(cfg, input.checked); });
+            const slider = document.createElement('span');
+            slider.className = 'slider';
+            rotulo.appendChild(input);
+            rotulo.appendChild(slider);
+            return rotulo;
+        }
+        const input = document.createElement('input');
+        input.className = 'form-input setting-input';
+        input.type = cfg.tipo === 'numero' ? 'number' : 'text';
+        input.value = String(cfg.valor);
+        if (cfg.minimo !== null)
+            input.min = String(cfg.minimo);
+        if (cfg.maximo !== null)
+            input.max = String(cfg.maximo);
+        input.addEventListener('change', () => {
+            void this.salvar(cfg, cfg.tipo === 'numero' ? Number(input.value) : input.value.trim());
+        });
+        return input;
+    }
+    async salvar(cfg, valor) {
+        try {
+            const resposta = await this.api.salvarConfiguracao(cfg.chave, valor);
+            cfg.valor = resposta.valor;
+            notificar('Configuração salva.');
+            window.dispatchEvent(new CustomEvent('nexus:config'));
+        }
+        catch (e) {
+            mostrarErro(e);
+            this.renderizar();
+        }
+    }
+}
 // ============================================================
-// 6. DASHBOARD
+// 7. DASHBOARD
 // ============================================================
 class DashboardManager {
     api;
     graficos = [];
     metasSetor = {};
-    esteiras = [];
     ultimosDados = [];
     requisicaoAtual = 0;
     constructor(api) {
@@ -255,6 +388,7 @@ class DashboardManager {
         elemento('filtro-visao')?.addEventListener('change', () => this.renderizar());
         elemento('btn-limpar-filtros')?.addEventListener('click', () => this.limparFiltros());
         window.addEventListener('nexus:tema', () => this.renderizar());
+        window.addEventListener('nexus:config', () => this.renderizar());
     }
     // ---------- dados de apoio ----------
     definirSetores(setores) {
@@ -262,7 +396,6 @@ class DashboardManager {
         setores.forEach(s => { this.metasSetor[s.nome] = Number(s.meta_percentual); });
     }
     definirEsteiras(esteiras) {
-        this.esteiras = esteiras;
         const select = elemento('filtro-esteira');
         if (!select)
             return;
@@ -273,19 +406,23 @@ class DashboardManager {
         if (esteiras.some(e => String(e.id_esteira) === atual))
             select.value = atual;
     }
-    async carregarAnos() {
+    async prepararFiltros() {
+        const periodo = elementoObrigatorio('filtro-mes');
+        periodo.innerHTML = '';
+        App.periodos.forEach(p => periodo.appendChild(criarOption(p.codigo, p.rotulo)));
+        const visao = elementoObrigatorio('filtro-visao');
+        visao.innerHTML = '';
+        App.visoes.forEach(v => visao.appendChild(criarOption(v.codigo, v.rotulo)));
         const anos = await this.api.getAnos();
-        const select = elementoObrigatorio('filtro-ano');
         const atual = new Date().getFullYear();
         const lista = anos.length > 0 ? anos : [atual];
+        const select = elementoObrigatorio('filtro-ano');
         select.innerHTML = '';
         lista.forEach(a => select.appendChild(criarOption(String(a), String(a))));
         select.value = String(lista.includes(atual) ? atual : Math.max(...lista));
     }
     limparFiltros() {
-        elementoObrigatorio('filtro-mes').value = 'todos';
-        elementoObrigatorio('filtro-visao').value = 'geral';
-        elementoObrigatorio('filtro-esteira').value = 'todas';
+        ['filtro-mes', 'filtro-visao', 'filtro-esteira'].forEach(id => { elementoObrigatorio(id).selectedIndex = 0; });
         void this.atualizarDashboard();
     }
     obterFiltros() {
@@ -302,7 +439,7 @@ class DashboardManager {
         const id = ++this.requisicaoAtual;
         elemento('dashboard')?.classList.add('carregando');
         try {
-            const dados = await this.api.getDashboard(filtros.ano, filtros.periodo.inicio, filtros.periodo.fim, filtros.esteira);
+            const dados = await this.api.getDashboard(filtros.ano, filtros.periodo.mes_inicio, filtros.periodo.mes_fim, filtros.esteira);
             if (id !== this.requisicaoAtual)
                 return; // chegou uma requisição mais nova
             this.ultimosDados = dados;
@@ -347,14 +484,17 @@ class DashboardManager {
         Chart.defaults.font.family = "'Inter', sans-serif";
     }
     corTexto() {
-        return getComputedStyle(document.body).getPropertyValue('--text-main').trim() || '#1e293b';
+        return getComputedStyle(document.body).getPropertyValue('--text-main').trim();
+    }
+    metaDoSetor(setor) {
+        return this.metasSetor[setor] ?? metaPadrao();
     }
     // ---------- cálculos ----------
     metaDe(linhas) {
         const total = linhas.reduce((s, l) => s + l.horas_ronda, 0);
         if (total === 0)
-            return META_PADRAO;
-        return linhas.reduce((s, l) => s + (this.metasSetor[l.setor] ?? META_PADRAO) * l.horas_ronda, 0) / total;
+            return metaPadrao();
+        return linhas.reduce((s, l) => s + this.metaDoSetor(l.setor) * l.horas_ronda, 0) / total;
     }
     agrupar(linhas, modo) {
         const mapa = new Map();
@@ -381,43 +521,47 @@ class DashboardManager {
         const meta = this.metaDe(dados);
         const delta = prod - meta;
         const esteirasAtivas = new Set(dados.map(d => d.id_esteira)).size;
-        const kpi = (classe, icone, titulo, valor, detalhe) => `
-            <div class="kpi-card ${classe}">
-                <div class="kpi-icone"><i class="${icone}"></i></div>
-                <div><div class="kpi-title">${titulo}</div><div class="kpi-valor">${valor}</div><div class="kpi-detalhe">${detalhe}</div></div>
+        const kpi = (classe, icone, titulo, valor, detalhe, cor = '') => `
+            <div class="kpi-card ${classe}" ${cor ? `style="border-left-color: ${escapeHtml(cor)};"` : ''}>
+                <div class="kpi-icone" ${cor ? `style="color: ${escapeHtml(cor)}; background-color: ${escapeHtml(cor)}1f;"` : ''}><i class="${escapeHtml(icone)}"></i></div>
+                <div><div class="kpi-title">${escapeHtml(titulo)}</div><div class="kpi-valor">${valor}</div><div class="kpi-detalhe">${detalhe}</div></div>
             </div>`;
+        const perdas = App.categorias.filter(c => c.perda).map(c => {
+            const horas = horasDe(t, c.chave);
+            return kpi('', c.icone, c.rotulo, formatarPercentual(percentual(horas, t.horas_ronda)), `${formatarNumero(horas, 0)} h`, c.cor);
+        }).join('');
         container.innerHTML =
             kpi(delta >= 0 ? 'kpi-ok' : 'kpi-falha', 'fas fa-bullseye', 'Produtividade Geral', formatarPercentual(prod), `Meta ${formatarPercentual(meta)} · ${delta >= 0 ? '+' : ''}${formatarNumero(delta)} p.p.`) +
                 kpi('kpi-neutro', 'fas fa-clock', 'Horas Operadas', `${formatarNumero(t.horas_ronda, 0)} h`, `${esteirasAtivas} esteiras ativas`) +
-                kpi('kpi-improdutivas', 'fas fa-hourglass-half', 'Improdutivas', formatarPercentual(percentual(t.horas_improdutivas, t.horas_ronda)), `${formatarNumero(t.horas_improdutivas, 0)} h`) +
-                kpi('kpi-reparo', 'fas fa-screwdriver-wrench', 'Reparo', formatarPercentual(percentual(t.horas_reparo, t.horas_ronda)), `${formatarNumero(t.horas_reparo, 0)} h`) +
-                kpi('kpi-flutuantes', 'fas fa-wave-square', 'Flutuantes', formatarPercentual(percentual(t.horas_flutuantes, t.horas_ronda)), `${formatarNumero(t.horas_flutuantes, 0)} h`);
+                perdas;
     }
     // ---------- visões ----------
     renderizarVisaoGeral(dados, filtros, grid) {
-        if (filtros.periodo.inicio !== filtros.periodo.fim) {
+        if (filtros.periodo.mes_inicio !== filtros.periodo.mes_fim) {
             const porMes = this.agrupar(dados, 'mes').sort((a, b) => a.mes - b.mes);
             const metas = porMes.map(m => this.metaDe(dados.filter(d => d.mes === m.mes)));
-            this.graficoCombinado(grid, `Evolução Mensal — ${filtros.periodo.rotulo} de ${filtros.ano}`, 'Visão consolidada de todos os setores', porMes, metas, true);
+            this.graficoCombinado(grid, `Evolução Mensal — ${filtros.periodo.rotulo} · ${filtros.ano}`, 'Visão consolidada de todos os setores', porMes, metas, true);
         }
         this.graficoSetores(grid, this.agrupar(dados, 'setor'));
         const titulo = document.createElement('h3');
         titulo.className = 'section-title span-total';
         titulo.textContent = 'Desempenho por Setor';
         grid.appendChild(titulo);
+        const visao = App.visoes.find(v => v.codigo === filtros.visao);
+        const piores = visao?.ordenacao === 'produtividade_asc';
+        const limite = cfgNumero('top_esteiras');
         Object.keys(this.metasSetor).forEach(nomeSetor => {
             const dSetor = dados.filter(d => d.setor === nomeSetor);
             if (dSetor.length === 0)
                 return;
             const porEsteira = this.agrupar(dSetor, 'esteira');
-            const piores = filtros.visao === 'piores';
             porEsteira.sort((a, b) => piores ? a.prodPura - b.prodPura : b.horas_ronda - a.horas_ronda);
-            const meta = this.metasSetor[nomeSetor] ?? META_PADRAO;
+            const meta = this.metaDoSetor(nomeSetor);
             const media = produtividade(totalizar(dSetor));
             const destaque = `<div class="kpi-inline"><span class="kpi-title">Média do setor</span><span class="kpi-valor ${media >= meta ? 'good' : 'danger'}">${formatarPercentual(media)}</span></div>`;
-            const subtitulo = `Meta ${meta}% · ${piores ? `${TOP_ESTEIRAS} piores` : `${TOP_ESTEIRAS} maiores volumes`} de ${porEsteira.length} esteiras`;
-            const slice = porEsteira.slice(0, TOP_ESTEIRAS);
-            this.graficoCombinado(grid, nomeSetor, subtitulo, slice, slice.map(() => meta), false, destaque);
+            const subtitulo = `Meta ${meta}% · ${limite} ${visao?.descricao_curta ?? ''} de ${porEsteira.length} esteiras`;
+            const recorte = porEsteira.slice(0, limite);
+            this.graficoCombinado(grid, nomeSetor, subtitulo, recorte, recorte.map(() => meta), false, destaque);
         });
     }
     renderizarVisaoEsteira(dados, grid) {
@@ -443,17 +587,18 @@ class DashboardManager {
         const ctx = this.criarCard(grid, titulo, subtitulo, largo, extra);
         if (!ctx)
             return;
+        const barras = App.categorias.map(c => ({
+            type: 'bar', label: c.rotulo, data: dados.map(d => horasDe(d, c.chave)),
+            backgroundColor: c.cor, yAxisID: 'y', order: 2
+        }));
         this.graficos.push(new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: dados.map(d => d.rotulo),
                 datasets: [
                     { type: 'line', label: 'Produtividade (%)', data: dados.map(d => d.prodPura), borderColor: this.corTexto(), backgroundColor: this.corTexto(), yAxisID: 'y1', tension: 0.3, borderWidth: 3, order: 1 },
-                    { type: 'line', label: 'Meta (%)', data: metas, borderColor: CORES.meta, borderDash: [5, 5], pointRadius: 0, yAxisID: 'y1', borderWidth: 2, order: 0 },
-                    { type: 'bar', label: 'Produtivas', data: dados.map(d => d.horas_produtivas), backgroundColor: CORES.produtivas, yAxisID: 'y', order: 2 },
-                    { type: 'bar', label: 'Improdutivas', data: dados.map(d => d.horas_improdutivas), backgroundColor: CORES.improdutivas, yAxisID: 'y', order: 2 },
-                    { type: 'bar', label: 'Reparo', data: dados.map(d => d.horas_reparo), backgroundColor: CORES.reparo, yAxisID: 'y', order: 2 },
-                    { type: 'bar', label: 'Flutuantes', data: dados.map(d => d.horas_flutuantes), backgroundColor: CORES.flutuantes, yAxisID: 'y', order: 2 }
+                    { type: 'line', label: 'Meta (%)', data: metas, borderColor: cfgTexto('cor_meta'), borderDash: [5, 5], pointRadius: 0, yAxisID: 'y1', borderWidth: 2, order: 0 },
+                    ...barras
                 ]
             },
             options: {
@@ -476,14 +621,16 @@ class DashboardManager {
         const ctx = this.criarCard(grid, 'Produtividade por Setor vs Meta', 'Verde: meta atingida · Vermelho: abaixo da meta', false);
         if (!ctx)
             return;
-        const linhas = porSetor.map(s => ({ nome: s.setor, prod: s.prodPura, meta: this.metasSetor[s.setor] ?? META_PADRAO }));
+        const linhas = porSetor.map(s => ({ nome: s.setor, prod: s.prodPura, meta: this.metaDoSetor(s.setor) }));
+        const corOk = cfgTexto('cor_ok');
+        const corFalha = cfgTexto('cor_falha');
         this.graficos.push(new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: linhas.map(l => l.nome),
                 datasets: [
-                    { label: 'Produtividade (%)', data: linhas.map(l => l.prod), backgroundColor: linhas.map(l => l.prod >= l.meta ? CORES.produtivas : CORES.reparo), borderRadius: 6 },
-                    { label: 'Meta (%)', data: linhas.map(l => l.meta), backgroundColor: 'rgba(37, 99, 235, 0.35)', borderRadius: 6 }
+                    { label: 'Produtividade (%)', data: linhas.map(l => l.prod), backgroundColor: linhas.map(l => l.prod >= l.meta ? corOk : corFalha), borderRadius: 6 },
+                    { label: 'Meta (%)', data: linhas.map(l => l.meta), backgroundColor: `${cfgTexto('cor_meta')}59`, borderRadius: 6 }
                 ]
             },
             options: {
@@ -499,11 +646,10 @@ class DashboardManager {
     }
     // ---------- relatório ----------
     rankingCausas(t) {
-        return [
-            { titulo: 'Horas improdutivas', acao: 'Reforçar o treinamento operacional e auditar o setup das máquinas.', horas: t.horas_improdutivas },
-            { titulo: 'Horas de reparo', acao: 'Revisar o cronograma de manutenção preventiva com a equipe técnica.', horas: t.horas_reparo },
-            { titulo: 'Horas flutuantes', acao: 'Acionar logística/PCP e alinhar o suprimento de material.', horas: t.horas_flutuantes }
-        ].map(c => ({ ...c, pct: percentual(c.horas, t.horas_ronda) })).sort((a, b) => b.horas - a.horas);
+        return App.categorias.filter(c => c.perda).map(c => {
+            const horas = horasDe(t, c.chave);
+            return { titulo: c.rotulo_longo, acao: c.acao ?? '', horas, pct: percentual(horas, t.horas_ronda) };
+        }).sort((a, b) => b.horas - a.horas);
     }
     gerarRelatorio(dados, individual) {
         const corpo = elemento('report-body');
@@ -526,7 +672,7 @@ class DashboardManager {
         if (!individual)
             html += this.tabelaSetores(dados) + this.tabelaCriticas(dados);
         const plano = this.rankingCausas(total)
-            .map(c => `<li><b>${c.titulo} (${formatarPercentual(c.pct)} das horas operadas):</b> ${c.acao}</li>`).join('');
+            .map(c => `<li><b>${escapeHtml(c.titulo)} (${formatarPercentual(c.pct)} das horas operadas):</b> ${escapeHtml(c.acao)}</li>`).join('');
         html += `<div class="insight-card positive"><div class="insight-title">🛠️ Plano de Ação (priorizado pelo maior impacto)</div><ul class="action-list">${plano}</ul></div>`;
         corpo.innerHTML = html;
     }
@@ -537,7 +683,7 @@ class DashboardManager {
                 return '';
             const t = totalizar(d);
             const real = produtividade(t);
-            const meta = this.metasSetor[nome] ?? META_PADRAO;
+            const meta = this.metaDoSetor(nome);
             const gap = real - meta;
             const causa = gap >= 0 ? '—' : escapeHtml(this.rankingCausas(t)[0]?.titulo);
             return `<tr>
@@ -551,7 +697,7 @@ class DashboardManager {
     }
     tabelaCriticas(dados) {
         const piores = this.agrupar(dados, 'esteira').filter(e => e.horas_ronda > 0).sort((a, b) => a.prodPura - b.prodPura).slice(0, 5);
-        const linhas = piores.map(e => `<tr><td>${escapeHtml(e.nome_esteira)}</td><td>${escapeHtml(e.setor)}</td><td class="text-danger">${formatarPercentual(e.prodPura)}</td><td>${this.metasSetor[e.setor] ?? META_PADRAO}%</td></tr>`).join('');
+        const linhas = piores.map(e => `<tr><td>${escapeHtml(e.nome_esteira)}</td><td>${escapeHtml(e.setor)}</td><td class="text-danger">${formatarPercentual(e.prodPura)}</td><td>${this.metaDoSetor(e.setor)}%</td></tr>`).join('');
         return `<div class="insight-card negative"><div class="insight-title">⚠️ 5 Esteiras Mais Críticas</div>
             <div class="table-responsive"><table class="data-table"><thead><tr><th>Esteira</th><th>Setor</th><th>Produtividade</th><th>Meta do setor</th></tr></thead><tbody>${linhas}</tbody></table></div></div>`;
     }
@@ -560,9 +706,11 @@ class TabelaGerenciavel {
     opcoes;
     itens = [];
     pagina = 1;
+    destaque = null;
     constructor(opcoes) {
         this.opcoes = opcoes;
         elemento(opcoes.buscaId)?.addEventListener('input', debounce(() => this.reiniciar(), 200));
+        window.addEventListener('nexus:config', () => this.reiniciar());
     }
     definirItens(itens) {
         this.itens = itens;
@@ -570,23 +718,39 @@ class TabelaGerenciavel {
     }
     reiniciar() {
         this.pagina = 1;
+        this.destaque = null;
+        this.renderizar();
+    }
+    /** Limpa a busca, abre a página do registro e o destaca. */
+    mostrar(predicado) {
+        const busca = elemento(this.opcoes.buscaId);
+        if (busca)
+            busca.value = '';
+        this.destaque = predicado;
+        const indice = this.filtrar().findIndex(predicado);
+        if (indice >= 0)
+            this.pagina = Math.floor(indice / cfgNumero('itens_por_pagina')) + 1;
         this.renderizar();
     }
     filtrar() {
-        const termo = (elemento(this.opcoes.buscaId)?.value ?? '').trim().toLowerCase();
+        const palavras = normalizarTexto(elemento(this.opcoes.buscaId)?.value ?? '').split(/\s+/).filter(p => p !== '');
         const extra = this.opcoes.filtroExtra;
-        return this.itens.filter(i => (termo === '' || this.opcoes.textoBusca(i).toLowerCase().includes(termo)) && (!extra || extra(i)));
+        return this.itens.filter(i => {
+            const texto = normalizarTexto(this.opcoes.textoBusca(i));
+            return palavras.every(p => texto.includes(p)) && (!extra || extra(i));
+        });
     }
     renderizar() {
         const corpo = elemento(this.opcoes.corpoId);
         if (!corpo)
             return;
+        const porPagina = cfgNumero('itens_por_pagina');
         const filtrados = this.filtrar();
-        const totalPaginas = Math.max(1, Math.ceil(filtrados.length / ITENS_POR_PAGINA));
+        const totalPaginas = Math.max(1, Math.ceil(filtrados.length / porPagina));
         this.pagina = Math.min(this.pagina, totalPaginas);
-        const inicio = (this.pagina - 1) * ITENS_POR_PAGINA;
+        const inicio = (this.pagina - 1) * porPagina;
         corpo.innerHTML = '';
-        const visiveis = filtrados.slice(inicio, inicio + ITENS_POR_PAGINA);
+        const visiveis = filtrados.slice(inicio, inicio + porPagina);
         if (visiveis.length === 0) {
             const tr = document.createElement('tr');
             const td = document.createElement('td');
@@ -598,6 +762,8 @@ class TabelaGerenciavel {
         }
         visiveis.forEach(item => {
             const tr = document.createElement('tr');
+            if (this.destaque && this.destaque(item))
+                tr.className = 'linha-destaque';
             this.opcoes.colunas.forEach(coluna => {
                 const td = document.createElement('td');
                 td.textContent = coluna(item);
@@ -625,30 +791,31 @@ class TabelaGerenciavel {
         if (!container)
             return;
         container.innerHTML = '';
-        const botao = (texto, destino, desabilitado) => {
+        const botao = (icone, destino, desabilitado) => {
             const b = document.createElement('button');
             b.type = 'button';
             b.className = 'btn btn-outline btn-sm';
-            b.innerHTML = texto;
+            b.innerHTML = `<i class="fas ${icone}"></i>`;
             b.disabled = desabilitado;
             b.addEventListener('click', () => { this.pagina = destino; this.renderizar(); });
             return b;
         };
         const info = document.createElement('span');
         info.textContent = `Página ${this.pagina} de ${totalPaginas}`;
-        container.appendChild(botao('<i class="fas fa-chevron-left"></i>', this.pagina - 1, this.pagina <= 1));
+        container.appendChild(botao('fa-chevron-left', this.pagina - 1, this.pagina <= 1));
         container.appendChild(info);
-        container.appendChild(botao('<i class="fas fa-chevron-right"></i>', this.pagina + 1, this.pagina >= totalPaginas));
+        container.appendChild(botao('fa-chevron-right', this.pagina + 1, this.pagina >= totalPaginas));
     }
 }
 // ============================================================
-// 8. CADASTROS (funcionários, esteiras, apontamentos)
+// 9. CADASTROS (funcionários, esteiras, apontamentos)
 // ============================================================
 class CadastroManager {
     api;
     dashboard;
     tabelaFuncionarios;
     tabelaEsteiras;
+    tabelaSetores;
     setores = [];
     funcionarios = [];
     esteiras = [];
@@ -673,6 +840,13 @@ class CadastroManager {
             rotuloVazio: 'Nenhuma esteira encontrada.',
             aoExcluir: e => { void this.excluirEsteira(e); }
         });
+        this.tabelaSetores = new TabelaGerenciavel({
+            corpoId: 'set-corpo', contadorId: 'set-contador', paginacaoId: 'set-paginacao', buscaId: 'busca-set',
+            colunas: [s => s.nome, s => `${formatarNumero(Number(s.meta_percentual))}%`, s => String(s.total_funcionarios)],
+            textoBusca: s => s.nome,
+            rotuloVazio: 'Nenhum setor encontrado.',
+            aoExcluir: s => { void this.excluirSetor(s); }
+        });
         elemento('filtro-func-setor')?.addEventListener('change', () => this.tabelaFuncionarios.reiniciar());
         this.iniciarFormularios();
     }
@@ -688,11 +862,43 @@ class CadastroManager {
         this.atualizarSelects();
         this.tabelaFuncionarios.definirItens(funcionarios);
         this.tabelaEsteiras.definirItens(esteiras);
+        this.tabelaSetores.definirItens(setores);
+        await this.carregarCargos();
+        this.aplicarCargoPadrao();
+        this.aplicarMetaPadraoSetor();
+    }
+    async carregarCargos() {
+        const lista = elemento('lista-cargos');
+        if (!lista)
+            return;
+        lista.innerHTML = '';
+        (await this.api.getCargos()).forEach(cargo => lista.appendChild(criarOption(cargo, cargo)));
+    }
+    aplicarCargoPadrao() {
+        const campo = elemento('cad-op-cargo');
+        if (campo)
+            campo.value = cfgTexto('cargo_padrao');
+    }
+    aplicarMetaPadraoSetor() {
+        const campo = elemento('cad-setor-meta');
+        if (campo)
+            campo.value = String(metaPadrao());
+    }
+    /** Recarrega os setores e propaga para metas, selects, tabelas e gráficos. */
+    async recarregarSetores(redesenharDashboard) {
+        this.setores = await this.api.getSetores();
+        this.dashboard.definirSetores(this.setores);
+        this.atualizarSelects();
+        this.tabelaSetores.definirItens(this.setores);
+        if (redesenharDashboard)
+            this.dashboard.renderizar();
     }
     async recarregarFuncionarios() {
         this.funcionarios = await this.api.getFuncionarios();
         this.atualizarSelects();
         this.tabelaFuncionarios.definirItens(this.funcionarios);
+        await this.carregarCargos();
+        await this.recarregarSetores(false); // atualiza a contagem de funcionários por setor
     }
     async recarregarEsteiras() {
         this.esteiras = await this.api.getEsteiras();
@@ -701,22 +907,7 @@ class CadastroManager {
         this.tabelaEsteiras.definirItens(this.esteiras);
     }
     atualizarSelects() {
-        const selFuncionario = elemento('ap-operador');
-        if (selFuncionario) {
-            selFuncionario.innerHTML = '';
-            selFuncionario.appendChild(criarOption('', 'Selecione um funcionário...'));
-            const grupos = new Map();
-            this.funcionarios.forEach(f => {
-                let grupo = grupos.get(f.setor);
-                if (!grupo) {
-                    grupo = document.createElement('optgroup');
-                    grupo.label = f.setor;
-                    grupos.set(f.setor, grupo);
-                    selFuncionario.appendChild(grupo);
-                }
-                grupo.appendChild(criarOption(String(f.id_funcionario), `${f.nome} (Matrícula: ${f.codigo_matricula})`));
-            });
-        }
+        this.renderizarOpcoesFuncionario();
         const selEsteira = elemento('ap-esteira');
         if (selEsteira) {
             selEsteira.innerHTML = '';
@@ -741,13 +932,69 @@ class CadastroManager {
                 selFiltro.value = atual;
         }
     }
+    // ---------- busca de funcionário no apontamento ----------
+    funcionariosFiltrados() {
+        const palavras = normalizarTexto(elemento('ap-busca-func')?.value ?? '').split(/\s+/).filter(p => p !== '');
+        return this.funcionarios.filter(f => {
+            const texto = normalizarTexto(`${f.nome} ${f.codigo_matricula}`);
+            return palavras.every(p => texto.includes(p));
+        });
+    }
+    renderizarOpcoesFuncionario() {
+        const select = elemento('ap-operador');
+        if (!select)
+            return;
+        const buscando = (elemento('ap-busca-func')?.value ?? '').trim() !== '';
+        const anterior = select.value;
+        const encontrados = this.funcionariosFiltrados();
+        select.innerHTML = '';
+        select.appendChild(criarOption('', 'Selecione um funcionário...'));
+        const grupos = new Map();
+        encontrados.forEach(f => {
+            let grupo = grupos.get(f.setor);
+            if (!grupo) {
+                grupo = document.createElement('optgroup');
+                grupo.label = f.setor;
+                grupos.set(f.setor, grupo);
+                select.appendChild(grupo);
+            }
+            grupo.appendChild(criarOption(String(f.id_funcionario), `${f.nome} (Matrícula: ${f.codigo_matricula})`));
+        });
+        const unico = encontrados.length === 1 ? encontrados[0] : undefined;
+        if (encontrados.some(f => String(f.id_funcionario) === anterior))
+            select.value = anterior;
+        else if (buscando && unico)
+            select.value = String(unico.id_funcionario);
+        const info = elemento('ap-busca-info');
+        if (info)
+            info.textContent = buscando ? `${encontrados.length} encontrado(s) de ${this.funcionarios.length}` : `${this.funcionarios.length} funcionários`;
+    }
+    // ---------- setores ----------
+    async excluirSetor(setor) {
+        try {
+            const confirmacao = await Swal.fire({
+                title: 'Confirmar exclusão',
+                html: `Deseja realmente excluir o setor <b>${escapeHtml(setor.nome)}</b>?`,
+                icon: 'warning', showCancelButton: true, reverseButtons: true,
+                confirmButtonText: 'Sim, excluir', cancelButtonText: 'Cancelar', confirmButtonColor: cfgTexto('cor_falha')
+            });
+            if (!confirmacao.isConfirmed)
+                return;
+            await this.api.excluirSetor(setor.id_setor);
+            await this.recarregarSetores(true);
+            notificar(`Setor ${setor.nome} excluído.`);
+        }
+        catch (e) {
+            mostrarErro(e); // ex.: setor ainda possui funcionários
+        }
+    }
     // ---------- exclusão ----------
     async confirmarExclusao(descricao, executar, avisoVinculos) {
         const primeira = await Swal.fire({
             title: 'Confirmar exclusão',
             html: `Deseja realmente excluir <b>${escapeHtml(descricao)}</b>?`,
             icon: 'warning', showCancelButton: true, reverseButtons: true,
-            confirmButtonText: 'Sim, excluir', cancelButtonText: 'Cancelar', confirmButtonColor: '#ef4444'
+            confirmButtonText: 'Sim, excluir', cancelButtonText: 'Cancelar', confirmButtonColor: cfgTexto('cor_falha')
         });
         if (!primeira.isConfirmed)
             return false;
@@ -762,7 +1009,7 @@ class CadastroManager {
                     title: 'Existem registros vinculados',
                     html: avisoVinculos(vinculos),
                     icon: 'warning', showCancelButton: true, reverseButtons: true,
-                    confirmButtonText: 'Excluir tudo', cancelButtonText: 'Cancelar', confirmButtonColor: '#ef4444'
+                    confirmButtonText: 'Excluir tudo', cancelButtonText: 'Cancelar', confirmButtonColor: cfgTexto('cor_falha')
                 });
                 if (!segunda.isConfirmed)
                     return false;
@@ -800,13 +1047,42 @@ class CadastroManager {
     }
     // ---------- formulários ----------
     iniciarFormularios() {
+        const busca = elemento('ap-busca-func');
+        busca?.addEventListener('input', () => this.renderizarOpcoesFuncionario());
+        busca?.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter')
+                return;
+            e.preventDefault(); // não envia o formulário; escolhe o primeiro resultado
+            const primeiro = this.funcionariosFiltrados()[0];
+            const select = elemento('ap-operador');
+            if (primeiro && select)
+                select.value = String(primeiro.id_funcionario);
+        });
+        elemento('form-setor')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const nome = elementoObrigatorio('cad-setor-nome').value.trim();
+            try {
+                await this.api.criarSetor(nome, lerNumero('cad-setor-meta'));
+                await this.recarregarSetores(true);
+                this.tabelaSetores.mostrar(s => s.nome === nome);
+                notificar(`Setor ${nome} criado e disponível em todo o sistema.`);
+                form.reset();
+                this.aplicarMetaPadraoSetor();
+            }
+            catch (err) {
+                mostrarErro(err);
+            }
+        });
         elemento('form-esteira')?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const form = e.target;
             try {
-                await this.api.criarEsteira(elementoObrigatorio('cad-codigo').value.trim().toUpperCase(), elementoObrigatorio('cad-descricao').value.trim());
+                const codigo = elementoObrigatorio('cad-codigo').value.trim().toUpperCase();
+                const gravada = await this.api.criarEsteira(codigo, elementoObrigatorio('cad-descricao').value.trim());
                 await this.recarregarEsteiras();
-                notificar('Esteira cadastrada.');
+                this.tabelaEsteiras.mostrar(esteira => esteira.codigo_patrimonio === codigo);
+                notificar(`Esteira cadastrada no banco (ID ${gravada.id_esteira}).`);
                 form.reset();
             }
             catch (err) {
@@ -818,10 +1094,16 @@ class CadastroManager {
             const form = e.target;
             const nome = elementoObrigatorio('cad-op-nome').value.trim();
             try {
-                await this.api.criarFuncionario(elementoObrigatorio('cad-op-cracha').value.trim(), elementoObrigatorio('cad-op-setor').value, nome, elementoObrigatorio('cad-op-cargo').value.trim());
+                const matricula = elementoObrigatorio('cad-op-cracha').value.trim();
+                const gravado = await this.api.criarFuncionario(matricula, elementoObrigatorio('cad-op-setor').value, nome, elementoObrigatorio('cad-op-cargo').value.trim());
                 await this.recarregarFuncionarios();
-                notificar(`Funcionário ${nome} cadastrado.`);
+                const filtroSetor = elemento('filtro-func-setor');
+                if (filtroSetor)
+                    filtroSetor.value = '';
+                this.tabelaFuncionarios.mostrar(f => f.codigo_matricula === matricula);
+                notificar(`Funcionário ${nome} cadastrado no banco (ID ${gravado.id_funcionario}).`);
                 form.reset();
+                this.aplicarCargoPadrao();
             }
             catch (err) {
                 mostrarErro(err);
@@ -866,26 +1148,34 @@ class CadastroManager {
                 mostrarErro(err);
             }
         });
-        elemento('form-perfil')?.addEventListener('submit', (e) => {
-            e.preventDefault();
-            notificar('Perfil atualizado.');
-        });
     }
 }
 // ============================================================
-// 9. INICIALIZAÇÃO
+// 10. INICIALIZAÇÃO
 // ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
-    const data = elemento('ap-data');
-    if (data)
-        data.value = hojeISO();
-    new ThemeManager();
-    new UIManager();
     const api = new ApiService();
-    const dashboard = new DashboardManager(api);
-    const cadastros = new CadastroManager(api, dashboard);
     try {
-        await Promise.all([cadastros.carregarDadosIniciais(), dashboard.carregarAnos()]);
+        // 1) Tudo que a tela precisa (menus, filtros, cores, metas, perfil...) vem do banco
+        const inicio = await api.getInicializacao();
+        App.configuracoes = inicio.configuracoes;
+        App.categorias = inicio.categorias;
+        App.periodos = inicio.periodos;
+        App.visoes = inicio.visoes;
+        document.title = cfgTexto('titulo_pagina');
+        elementoObrigatorio('nome-sistema').textContent = cfgTexto('nome_sistema');
+        const data = elemento('ap-data');
+        if (data)
+            data.value = hojeISO();
+        new ThemeManager(api, inicio.usuario?.tema ?? '');
+        new UIManager(inicio.abas);
+        new PerfilManager(api, inicio.usuario);
+        new ConfiguracoesManager(api);
+        renderizarNotificacoes(inicio.notificacoes);
+        // 2) Dashboard e cadastros
+        const dashboard = new DashboardManager(api);
+        const cadastros = new CadastroManager(api, dashboard);
+        await Promise.all([cadastros.carregarDadosIniciais(), dashboard.prepararFiltros()]);
         await dashboard.atualizarDashboard();
     }
     catch (e) {

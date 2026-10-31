@@ -83,6 +83,14 @@ function excluir(PDO $pdo, string $tabela, string $pk, string $tabelaVinculo, st
     }
     responder(['excluido' => true, 'vinculos_removidos' => $vinculos]);
 }
+function converterValor(string $valor, string $tipo): float|bool|string
+{
+    return match ($tipo) {
+        'numero'   => (float)$valor,
+        'booleano' => $valor === '1',
+        default    => $valor,
+    };
+}
 
 $recurso = $_GET['recurso'] ?? '';
 $metodo  = $_SERVER['REQUEST_METHOD'];
@@ -94,9 +102,53 @@ try {
 
         // ---------- SETORES ----------
         case 'GET:setores':
-            responder($pdo->query(
-                'SELECT id_setor, nome, meta_percentual FROM setor ORDER BY nome'
-            )->fetchAll());
+            $setores = $pdo->query(
+                'SELECT s.id_setor, s.nome, s.meta_percentual, COUNT(f.id_funcionario) AS total_funcionarios
+                 FROM setor s
+                 LEFT JOIN funcionario f ON f.id_setor = s.id_setor
+                 GROUP BY s.id_setor, s.nome, s.meta_percentual
+                 ORDER BY s.nome'
+            )->fetchAll();
+            foreach ($setores as &$s) {
+                $s['meta_percentual']    = (float)$s['meta_percentual'];
+                $s['total_funcionarios'] = (int)$s['total_funcionarios'];
+            }
+            unset($s);
+            responder($setores);
+
+        case 'POST:setores':
+            $d = entrada();
+            $nome = texto($d, 'nome', 50);
+            if (!isset($d['meta_percentual']) || !is_numeric($d['meta_percentual'])) erro('Informe a meta de produtividade.');
+            $meta = (float)$d['meta_percentual'];
+            if ($meta < 0 || $meta > 100) erro('A meta deve estar entre 0 e 100.');
+
+            $st = $pdo->prepare('SELECT 1 FROM setor WHERE nome = ?');
+            $st->execute([$nome]);
+            if ($st->fetchColumn()) erro('Já existe um setor com esse nome.', 409);
+
+            $st = $pdo->prepare('INSERT INTO setor (nome, meta_percentual) VALUES (?, ?)');
+            $st->execute([$nome, $meta]);
+            responder(['id_setor' => (int)$pdo->lastInsertId()], 201);
+
+        case 'DELETE:setores':
+            $id = (int)($_GET['id'] ?? 0);
+            if ($id <= 0) erro('Identificador inválido.');
+
+            $st = $pdo->prepare('SELECT 1 FROM setor WHERE id_setor = ?');
+            $st->execute([$id]);
+            if (!$st->fetchColumn()) erro('Setor não encontrado.', 404);
+
+            // Excluir um setor com funcionários apagaria a equipe inteira: bloqueado.
+            $st = $pdo->prepare('SELECT COUNT(*) FROM funcionario WHERE id_setor = ?');
+            $st->execute([$id]);
+            $qtd = (int)$st->fetchColumn();
+            if ($qtd > 0) {
+                erro("Não é possível excluir: o setor possui $qtd funcionário(s). Exclua-os antes de remover o setor.", 409);
+            }
+
+            $pdo->prepare('DELETE FROM setor WHERE id_setor = ?')->execute([$id]);
+            responder(['excluido' => true]);
 
         // ---------- ANOS COM DADOS ----------
         case 'GET:anos':
@@ -240,10 +292,13 @@ try {
                 erro('Período inválido.');
             }
 
+            // Faixa de datas 
             $inicio = sprintf('%04d-%02d-01', $ano, $mesIni);
             $fim = (new DateTimeImmutable(sprintf('%04d-%02d-01', $ano, $mesFim)))
                 ->modify('last day of this month')->format('Y-m-d');
 
+            // O denominador do rateio (total de horas nas esteiras do apontamento)
+            // é calculado só para o período pedido.
             $sql = 'SELECT MONTH(a.data_registro) AS mes, e.id_esteira, e.nome_descricao AS nome_esteira,
                            s.nome AS setor,
                            SUM(ed.horas_trabalhadas_nela)                                   AS horas_ronda,
@@ -286,10 +341,129 @@ try {
             unset($l);
             responder($linhas);
 
+        // ---------- INICIALIZAÇÃO----------
+        case 'GET:inicializacao':
+            $configuracoes = $pdo->query(
+                'SELECT chave, valor, tipo, titulo, descricao, editavel, minimo, maximo
+                 FROM configuracao ORDER BY chave'
+            )->fetchAll();
+            foreach ($configuracoes as &$c) {
+                $c['valor']    = converterValor((string)$c['valor'], (string)$c['tipo']);
+                $c['editavel'] = (bool)$c['editavel'];
+                $c['minimo']   = $c['minimo'] !== null ? (float)$c['minimo'] : null;
+                $c['maximo']   = $c['maximo'] !== null ? (float)$c['maximo'] : null;
+            }
+            unset($c);
+
+            $categorias = $pdo->query(
+                'SELECT chave, rotulo, rotulo_longo, cor, icone, acao, perda
+                 FROM categoria_hora ORDER BY ordem'
+            )->fetchAll();
+            foreach ($categorias as &$c) { $c['perda'] = (bool)$c['perda']; }
+            unset($c);
+
+            $periodos = $pdo->query(
+                'SELECT codigo, rotulo, rotulo_curto, mes_inicio, mes_fim FROM periodo ORDER BY ordem'
+            )->fetchAll();
+            foreach ($periodos as &$p) {
+                $p['mes_inicio'] = (int)$p['mes_inicio'];
+                $p['mes_fim']    = (int)$p['mes_fim'];
+            }
+            unset($p);
+
+            $notificacoes = $pdo->query(
+                'SELECT id_notificacao, mensagem, icone, lida
+                 FROM notificacao ORDER BY criada_em DESC, id_notificacao DESC LIMIT 20'
+            )->fetchAll();
+            foreach ($notificacoes as &$n) { $n['lida'] = (bool)$n['lida']; }
+            unset($n);
+
+            $usuario = $pdo->query(
+                'SELECT nome, apelido, email, avatar_url, tema FROM usuario ORDER BY id_usuario LIMIT 1'
+            )->fetch();
+
+            responder([
+                'configuracoes' => $configuracoes,
+                'categorias'    => $categorias,
+                'periodos'      => $periodos,
+                'visoes'        => $pdo->query(
+                    'SELECT codigo, rotulo, descricao_curta, ordenacao FROM visao ORDER BY ordem'
+                )->fetchAll(),
+                'abas'          => $pdo->query(
+                    'SELECT codigo, rotulo_menu, titulo, subtitulo, icone, posicao FROM aba ORDER BY ordem'
+                )->fetchAll(),
+                'usuario'       => $usuario ?: null,
+                'notificacoes'  => $notificacoes,
+            ]);
+
+        // ---------- CARGOS EXISTENTES ----------
+        case 'GET:cargos':
+            responder($pdo->query('SELECT DISTINCT cargo FROM funcionario ORDER BY cargo')
+                ->fetchAll(PDO::FETCH_COLUMN));
+
+        // ---------- CONFIGURAÇÕES ----------
+        case 'POST:configuracoes':
+            $d = entrada();
+            $chave = texto($d, 'chave', 50);
+            $st = $pdo->prepare('SELECT tipo, editavel, minimo, maximo FROM configuracao WHERE chave = ?');
+            $st->execute([$chave]);
+            $cfg = $st->fetch();
+            if (!$cfg) erro('Configuração inexistente.', 404);
+            if (!(int)$cfg['editavel']) erro('Esta configuração não pode ser alterada.', 403);
+
+            $valor = $d['valor'] ?? null;
+            if ($cfg['tipo'] === 'numero') {
+                if (!is_numeric($valor)) erro('Informe um valor numérico.');
+                $n = (float)$valor;
+                if ($cfg['minimo'] !== null && $n < (float)$cfg['minimo']) erro("O valor mínimo é {$cfg['minimo']}.");
+                if ($cfg['maximo'] !== null && $n > (float)$cfg['maximo']) erro("O valor máximo é {$cfg['maximo']}.");
+                $valor = (string)$n;
+            } elseif ($cfg['tipo'] === 'booleano') {
+                $valor = ($valor === true || $valor === 1 || $valor === '1') ? '1' : '0';
+            } else {
+                $valor = trim((string)$valor);
+                if ($valor === '' || mb_strlen($valor) > 255) erro('Valor inválido.');
+            }
+
+            $pdo->prepare('UPDATE configuracao SET valor = ? WHERE chave = ?')->execute([$valor, $chave]);
+            responder(['chave' => $chave, 'valor' => converterValor($valor, (string)$cfg['tipo'])]);
+
+        // ---------- PERFIL E TEMA ----------
+        case 'POST:perfil':
+            $d = entrada();
+            $nome  = texto($d, 'nome', 100);
+            $email = texto($d, 'email', 150);
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) erro('E-mail inválido.');
+
+            $idUsuario = (int)$pdo->query('SELECT id_usuario FROM usuario ORDER BY id_usuario LIMIT 1')->fetchColumn();
+            if ($idUsuario <= 0) erro('Usuário não encontrado.', 404);
+
+            $st = $pdo->prepare('SELECT 1 FROM usuario WHERE email = ? AND id_usuario <> ?');
+            $st->execute([$email, $idUsuario]);
+            if ($st->fetchColumn()) erro('E-mail já utilizado por outro usuário.', 409);
+
+            $apelido = explode(' ', $nome)[0];
+            $pdo->prepare('UPDATE usuario SET nome = ?, apelido = ?, email = ? WHERE id_usuario = ?')
+                ->execute([$nome, $apelido, $email, $idUsuario]);
+
+            $st = $pdo->prepare('SELECT nome, apelido, email, avatar_url, tema FROM usuario WHERE id_usuario = ?');
+            $st->execute([$idUsuario]);
+            responder($st->fetch());
+
+        case 'POST:tema':
+            $tema = (string)(entrada()['tema'] ?? '');
+            if (!in_array($tema, ['light', 'dark'], true)) erro('Tema inválido.');
+            $pdo->query('UPDATE usuario SET tema = ' . $pdo->quote($tema) . ' ORDER BY id_usuario LIMIT 1');
+            responder(['tema' => $tema]);
+
         default:
             erro('Rota não encontrada.', 404);
     }
 } catch (Throwable $e) {
     error_log($e->getMessage());
-    erro('Erro interno do servidor.', 500);
+    $resposta = ['erro' => 'Erro interno do servidor.'];
+    if (defined('MODO_DEBUG') && MODO_DEBUG) {
+        $resposta['detalhe'] = $e->getMessage();
+    }
+    responder($resposta, 500);
 }
