@@ -98,6 +98,12 @@
 
             <!-- APONTAMENTOS -->
             <div id="apontamentos" class="tab-content">
+                <div class="subtabs">
+                    <button type="button" class="subtab-btn active" data-sub="ap-novo"><i class="fas fa-plus"></i> Novo apontamento</button>
+                    <button type="button" class="subtab-btn" data-sub="ap-lista"><i class="fas fa-list"></i> Apontamentos lançados</button>
+                </div>
+
+                <div id="ap-novo" class="subpainel">
                 <div class="card form-box" style="max-width: 900px; margin: 0 auto;">
                     <h3><i class="far fa-clock"></i> Apontamento de Produtividade Diário</h3>
                     <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 15px;">
@@ -123,6 +129,118 @@
                             <button type="submit" class="btn btn-primary" style="width: 100%;">Registrar Apontamento</button>
                         </div>
                     </form>
+                </div>
+                </div>
+
+                <div id="ap-lista" class="subpainel" hidden>
+                    <div class="card">
+                        <div class="filter-bar">
+                            <div class="filter-group">
+                                <label for="lap-ano">Ano:</label>
+                                <select id="lap-ano" class="form-input"></select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="lap-periodo">Período (mês / semestre):</label>
+                                <select id="lap-periodo" class="form-input"></select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="lap-data-ini">Data inicial:</label>
+                                <input type="date" id="lap-data-ini" class="form-input">
+                            </div>
+                            <div class="filter-group">
+                                <label for="lap-data-fim">Data final:</label>
+                                <input type="date" id="lap-data-fim" class="form-input">
+                            </div>
+                        </div>
+                        <div class="filter-bar">
+                            <div class="filter-group">
+                                <label for="lap-funcionario">Funcionário (nome ou matrícula):</label>
+                                <input type="search" id="lap-funcionario" class="form-input" list="dl-lap-func" placeholder="Digite para pesquisar ou escolha na lista..." autocomplete="off">
+                                <datalist id="dl-lap-func"></datalist>
+                            </div>
+                            <div class="filter-group">
+                                <label for="lap-setor">Setor (na data do apontamento):</label>
+                                <select id="lap-setor" class="form-input">
+                                    <option value="0">Todos os setores</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="lap-esteira">Esteira:</label>
+                                <select id="lap-esteira" class="form-input">
+                                    <option value="todas">Todas as esteiras</option>
+                                </select>
+                            </div>
+                            <div class="filter-group" style="max-width: 110px; min-width: 90px;">
+                                <label for="lap-por-pagina">Por página:</label>
+                                <select id="lap-por-pagina" class="form-input">
+                                    <option value="10">10</option>
+                                    <option value="25" selected>25</option>
+                                    <option value="50">50</option>
+                                    <option value="100">100</option>
+                                </select>
+                            </div>
+                            <button type="button" id="lap-limpar" class="btn btn-outline"><i class="fas fa-rotate-left"></i> Limpar</button>
+                        </div>
+                        <p class="text-muted" style="font-size: 0.8rem; margin: -8px 0 16px;">
+                            Ao preencher as datas, elas substituem o Ano e o Período. Escolha um funcionário na lista para ver só os apontamentos dele.
+                        </p>
+
+                        <div class="vista-toggle">
+                            <button type="button" class="vista-btn active" data-vista="lista"><i class="fas fa-table"></i> Lista</button>
+                            <button type="button" class="vista-btn" data-vista="analise"><i class="fas fa-chart-pie"></i> Análise gráfica</button>
+                        </div>
+
+                        <!-- Vista: lista -->
+                        <div id="lap-vista-lista">
+                            <div class="table-toolbar">
+                                <h3><i class="fas fa-list"></i> Apontamentos lançados <span class="count-pill" id="lap-contador">0</span></h3>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="data-table tabela-larga">
+                                    <thead>
+                                        <tr>
+                                            <th>Data</th><th>Lançado em (relógio)</th><th>Funcionário</th><th>Setor</th><th>Esteiras</th>
+                                            <th>Ronda</th><th>Apont.</th><th>Prod.</th><th>Improd.</th><th>Reparo</th><th>Flut.</th>
+                                            <th class="col-acoes">Ações</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="lap-corpo"></tbody>
+                                </table>
+                            </div>
+                            <div class="pagination" id="lap-paginacao"></div>
+                        </div>
+
+                        <!-- Vista: análise gráfica -->
+                        <div id="lap-vista-analise" hidden>
+                            <div id="ana-resumo"></div>
+                            <div class="kpi-grid" id="ana-kpis"></div>
+                            <div class="charts-grid analise-bloco" id="ana-graficos"></div>
+
+                            <div id="ana-ranking" hidden>
+                                <div class="table-toolbar">
+                                    <h3><i class="fas fa-ranking-star"></i> Ranking de funcionários <span class="count-pill" id="ana-contador">0</span></h3>
+                                    <div class="toolbar-controls">
+                                        <select id="ana-ordenar" class="form-input">
+                                            <option value="prod_desc">Maior produtividade</option>
+                                            <option value="prod_asc">Menor produtividade</option>
+                                            <option value="horas_desc">Maior volume de horas</option>
+                                            <option value="nome">Nome (A–Z)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <p class="text-muted" style="font-size: 0.8rem; margin-bottom: 10px;">* Mudou de setor durante o período filtrado. A meta é a que valia em cada data.</p>
+                                <div class="table-responsive">
+                                    <table class="data-table tabela-larga">
+                                        <thead>
+                                            <tr><th>Funcionário</th><th>Matrícula</th><th>Setor atual</th><th>Dias</th><th>Horas</th><th>Produtividade</th><th>Meta</th><th>Diferença</th><th class="col-acoes">Análise</th></tr>
+                                        </thead>
+                                        <tbody id="ana-corpo"></tbody>
+                                    </table>
+                                </div>
+                                <div class="pagination" id="ana-paginacao"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
